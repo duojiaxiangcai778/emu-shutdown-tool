@@ -1,0 +1,14 @@
+# Build artifacts
+*.spec
+build/
+dist/
+__pycache__/
+*.pyc
+
+# Temp files
+app_icon.png
+app_icon.ico
+
+# IDE
+.vscode/
+.idea/
