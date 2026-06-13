@@ -8,13 +8,15 @@ __pycache__/
 # Backup files
 *.bak
 
+# Runtime generated
+tasks_config.json
+crash.log
+
 # Debug logs
-_snapshot_*.log
-_backup_*.log
 *.log
 
-# Crash logs
-crash.log
+# Test snapshots in exe dir
+成品/快照/
 
 # Temp files
 app_icon.png
