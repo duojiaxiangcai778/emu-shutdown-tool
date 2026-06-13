@@ -1,0 +1,25 @@
+# Build artifacts
+*.spec
+build/
+dist/
+__pycache__/
+*.pyc
+
+# Backup files
+*.bak
+
+# Debug logs
+_snapshot_*.log
+_backup_*.log
+*.log
+
+# Crash logs
+crash.log
+
+# Temp files
+app_icon.png
+app_icon.ico
+
+# IDE
+.vscode/
+.idea/

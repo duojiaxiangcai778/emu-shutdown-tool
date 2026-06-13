@@ -1,0 +1,13 @@
+{
+  "paths": {
+    "ld_path": "D:\\E\\LDPlayer9",
+    "multiplayer_path": "D:\\E\\ldmutiplayer",
+    "vms_config_dir": "D:\\E\\LDPlayer9\\vms\\config",
+    "dnconsole": "D:\\E\\LDPlayer9\\dnconsole.exe",
+    "dnmultiplayerex": "D:\\E\\ldmutiplayer\\dnmultiplayerex.exe"
+  },
+  "auto_launch_instances": [
+    "leidian0",
+    "leidian1"
+  ]
+}
