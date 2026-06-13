@@ -438,7 +438,9 @@ def _scan_tasklist():
 # 优雅关闭引擎（替代原 kill_emulators_async / _kill_single_process）
 # ============================================================
 
-GRACEFUL_TIMEOUT = 30       # 优雅关闭等待最大秒数
+GRACEFUL_TIMEOUT = 90       # 优雅关闭等待最大秒数（一级）
+GRACEFUL_TIMEOUT_2 = 40     # 二次等待秒数（dnconsole quit 后）
+ADB_SHUTDOWN_WAIT = 15      # ADB 关机等待秒数
 POST_FORCE_WAIT = 5         # 强制关闭后等待秒数
 SHUTDOWN_CANCEL_WAIT = 5    # 关机前取消倒计时秒数
 BACKUP_KEEP_COUNT = 20      # 备份保留最大份数
@@ -563,7 +565,7 @@ def graceful_kill_async(on_done, on_status=None, on_progress=None,
             if not procs:
                 _status("未检测到模拟器进程")
             else:
-                _status(f"发现 {count} 个模拟器进程，准备优雅关闭")
+                _status(f"发现 {count} 个模拟器进程，准备安全关闭")
                 _progress(5)
 
             # ---- 备份配置 ----
@@ -572,12 +574,10 @@ def graceful_kill_async(on_done, on_status=None, on_progress=None,
                 _progress(8)
                 backup_dir = os.path.join(_config_dir_abs(), '备份')
                 _, backup_msg = backup_config_files(backup_dir)
-                # 清理旧备份，只保留最新 BACKUP_KEEP_COUNT 份
                 _cleanup_old_backups(backup_dir)
                 _status(backup_msg)
 
             if not procs:
-                # 没有进程，直接跳到关机
                 elapsed = int(time.time() - start_ts)
                 _progress(elapsed)
                 if do_shutdown:
@@ -586,85 +586,175 @@ def graceful_kill_async(on_done, on_status=None, on_progress=None,
                 on_done(0, 0, 0, [], backup_msg, shutdown_executed)
                 return
 
-            # ---- 阶段1：dnconsole quitall（最优雅） ----
+            # ---- 阶段1：dnconsole quitall（最优雅，所有实例一起关）----
             ld_path = find_ldplayer_install_path(procs)
+            dnconsole_path = None
             if ld_path:
-                dnconsole = os.path.join(ld_path, 'dnconsole.exe')
-                if os.path.exists(dnconsole):
-                    _status("通过 dnconsole 优雅关闭模拟器实例...")
+                dnconsole_path = os.path.join(ld_path, 'dnconsole.exe')
+                if os.path.exists(dnconsole_path):
+                    _status("通过 dnconsole quitall 优雅关闭所有实例...")
                     _progress(10)
                     try:
-                        subprocess.run([dnconsole, 'quitall'], capture_output=True,
+                        subprocess.run([dnconsole_path, 'quitall'], capture_output=True,
                                        text=True, timeout=15,
                                        creationflags=subprocess.CREATE_NO_WINDOW)
                     except Exception:
                         pass
 
-            # ---- 阶段2：WM_CLOSE + taskkill 不带 /F ----
-            _status("向模拟器窗口发送关闭信号...")
-            _progress(12)
-            for proc in procs:
-                hwnds = get_process_windows(proc['pid'])
-                for hw in hwnds:
-                    user32.SendMessageW(hw, WM_CLOSE, 0, 0)
-            for proc in procs:
-                try:
-                    subprocess.run(['taskkill', '/PID', str(proc['pid'])],
-                                   capture_output=True, timeout=5,
-                                   creationflags=subprocess.CREATE_NO_WINDOW)
-                except Exception:
-                    pass
-
-            # ---- 阶段3：等待优雅退出（最多 GRACEFUL_TIMEOUT 秒） ----
-            _status("等待模拟器保存配置并退出...")
+            # ---- 等待阶段1完成（60秒）----
+            _status("等待实例保存数据并退出...")
             deadline = time.time() + GRACEFUL_TIMEOUT
             while time.time() < deadline:
                 remaining = _do_scan()
                 exited_count = count - len(remaining)
                 if not remaining:
-                    _status(f"所有进程已优雅关闭 ({count}/{count}) ✓")
+                    _status(f"所有进程已安全关闭 ({count}/{count}) ✓")
                     success = count
                     break
                 elapsed = int(time.time() - start_ts)
-                _progress(min(elapsed + 15, TOTAL - 10))
+                _progress(min(elapsed + 5, 40))
                 still = ', '.join(f"{p['name']}({p['pid']})" for p in remaining[:3])
                 if len(remaining) > 3:
                     still += f"... 共{len(remaining)}个"
                 _status(f"等待退出 ({exited_count}/{count})  剩余: {still}")
                 time.sleep(1)
             else:
-                # 超时
                 remaining = _do_scan()
-                _status(f"优雅关闭超时，剩余 {len(remaining)} 个进程")
+                _status(f"阶段1完成，剩余 {len(remaining)} 个进程，进入阶段2")
 
-            # ---- 阶段4：强制关闭剩余 ----
+            # ---- 阶段2：逐个 dnconsole quit --index N（针对每个剩余实例）----
             remaining = _do_scan()
-            if remaining:
-                _status(f"强制关闭 {len(remaining)} 个剩余进程...")
-                _progress(TOTAL - POST_FORCE_WAIT - 5)
+            if remaining and dnconsole_path and os.path.exists(dnconsole_path):
+                _status("逐个发送 quit 指令到剩余实例...")
+                _progress(42)
                 for proc in remaining:
+                    # 尝试从进程命令行提取实例名
                     try:
-                        subprocess.run(['taskkill', '/F', '/PID', str(proc['pid'])],
-                                       capture_output=True, timeout=8,
-                                       creationflags=subprocess.CREATE_NO_WINDOW)
-                        success += 1
+                        r = subprocess.run(
+                            ['wmic', 'process', 'where', f'ProcessId={proc["pid"]}',
+                             'get', 'CommandLine', '/format:csv'],
+                            capture_output=True, text=True, timeout=5,
+                            creationflags=subprocess.CREATE_NO_WINDOW
+                        )
+                        for line in r.stdout.splitlines():
+                            if 'leidian' in line.lower() or 'dnplayer' in line.lower():
+                                parts = line.split(',')
+                                cmdline = parts[-1].lower() if len(parts) > 1 else ''
+                                # 提取 --name 或 --index 参数
+                                for marker in ['--name ', '--index ']:
+                                    if marker in cmdline:
+                                        val = cmdline.split(marker)[1].split()[0] if marker in cmdline else ''
+                                        if val:
+                                            idx = val
+                                            subprocess.run(
+                                                [dnconsole_path, 'quit', '--index', idx],
+                                                capture_output=True, timeout=8,
+                                                creationflags=subprocess.CREATE_NO_WINDOW
+                                            )
+                                            break
                     except Exception:
                         pass
-                _status("等待强制关闭生效...")
-                time.sleep(1)
-                remaining2 = _do_scan()
-                if remaining2:
-                    _status(f"仍有 {len(remaining2)} 个进程残留，尝试 wmic 删除...")
-                    for proc in remaining2:
+
+                # 等待第二阶段完成（40秒）
+                _status("等待实例响应 quit 指令...")
+                deadline2 = time.time() + GRACEFUL_TIMEOUT_2
+                while time.time() < deadline2:
+                    remaining = _do_scan()
+                    exited = count - len(remaining)
+                    if not remaining:
+                        _status(f"所有进程已关闭 ({count}/{count}) ✓")
+                        success = count
+                        break
+                    _progress(min(42 + int(time.time() - start_ts), 65))
+                    _status(f"等待响应 ({exited}/{count})...")
+                    time.sleep(1)
+                else:
+                    remaining = _do_scan()
+                    _status(f"阶段2完成，剩余 {len(remaining)} 个进程")
+
+            # ---- 阶段3：ADB 关机（让 Android 系统安全停止）----
+            remaining = _do_scan()
+            if remaining and dnconsole_path and os.path.exists(dnconsole_path):
+                _status("通过 ADB 发送关机指令到 Android 系统...")
+                _progress(65)
+                for proc in remaining:
+                    try:
+                        # 先获取 adb 端口
+                        r = subprocess.run(
+                            [dnconsole_path, 'adb', '--name', f'leidian{proc["pid"] % 100}',
+                             '--command', 'shell reboot -p'],
+                            capture_output=True, text=True, timeout=10,
+                            creationflags=subprocess.CREATE_NO_WINDOW
+                        )
+                    except Exception:
+                        pass
+                _status(f"等待 ADB 关机生效（{ADB_SHUTDOWN_WAIT} 秒）...")
+                for i in range(ADB_SHUTDOWN_WAIT):
+                    remaining = _do_scan()
+                    if not remaining:
+                        success = count
+                        break
+                    time.sleep(1)
+
+            # ---- 阶段4：最后手段 — 非强制 taskkill（不带 /F）----
+            remaining = _do_scan()
+            if remaining:
+                _status(f"发送关闭信号到 {len(remaining)} 个剩余进程...")
+                _progress(80)
+                for proc in remaining:
+                    # 先发 WM_CLOSE
+                    hwnds = get_process_windows(proc['pid'])
+                    for hw in hwnds:
+                        user32.SendMessageW(hw, WM_CLOSE, 0, 0)
+                    # 再发 taskkill（不带 /F，相当于再发一次 WM_CLOSE）
+                    try:
+                        subprocess.run(['taskkill', '/PID', str(proc['pid'])],
+                                       capture_output=True, timeout=5,
+                                       creationflags=subprocess.CREATE_NO_WINDOW)
+                    except Exception:
+                        pass
+
+                # 等待进程响应
+                _status("等待进程响应关闭信号...")
+                for i in range(20):
+                    remaining = _do_scan()
+                    if not remaining:
+                        success = count
+                        break
+                    time.sleep(1)
+                else:
+                    remaining = _do_scan()
+                    _status(f"仍有 {len(remaining)} 个进程未响应")
+
+            # ---- 阶段5：最终强制关闭（仅清理僵尸进程）----
+            remaining = _do_scan()
+            if remaining:
+                # 检查是否只剩僵死的 adb/exe 辅助进程，不是模拟器核心进程
+                core_remaining = [p for p in remaining if 'adb' not in p['name'].lower()
+                                 and 'dnconsole' not in p['name'].lower()]
+                if core_remaining:
+                    _status(f"⚠ 强制关闭 {len(core_remaining)} 个顽固进程（可能丢失数据）...")
+                    _progress(88)
+                    for proc in core_remaining:
                         try:
-                            subprocess.run(['wmic', 'process', 'where',
-                                           f'ProcessId={proc["pid"]}', 'delete'],
+                            subprocess.run(['taskkill', '/F', '/PID', str(proc['pid'])],
+                                           capture_output=True, timeout=8,
+                                           creationflags=subprocess.CREATE_NO_WINDOW)
+                            success += 1
+                        except Exception:
+                            pass
+                # 辅助进程也清理
+                for proc in remaining:
+                    if 'adb' in proc['name'].lower() or 'dnconsole' in proc['name'].lower():
+                        try:
+                            subprocess.run(['taskkill', '/F', '/PID', str(proc['pid'])],
                                            capture_output=True, timeout=5,
                                            creationflags=subprocess.CREATE_NO_WINDOW)
                         except Exception:
                             pass
             else:
-                success = count
+                if success == 0:
+                    success = count
 
             # ---- 等待清理 ----
             _status("等待系统清理完成...")
