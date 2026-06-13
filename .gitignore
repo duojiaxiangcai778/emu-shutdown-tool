@@ -12,6 +12,12 @@ __pycache__/
 tasks_config.json
 crash.log
 
+# Instance config (generated per-machine)
+成品/instance_config.json
+
+# Snapshot examples (user data)
+快照/
+
 # Debug logs
 *.log
 
