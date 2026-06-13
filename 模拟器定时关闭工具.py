@@ -926,6 +926,9 @@ class EmulatorShutdownApp:
         # 关闭任务
         self.shutdown_tasks: list = []
         self.next_shutdown_id = 1
+        # 启动任务
+        self.launch_tasks: list = []
+        self.next_launch_id = 1
         # 通用
         self.scan_timer_id = None
         self._emu_procs_cache = []
@@ -1053,6 +1056,33 @@ class EmulatorShutdownApp:
                        font=self.f_body, bg=CARD, fg=TEXT_SUB,
                        selectcolor=CARD, activebackground=CARD,
                        command=self._save_tasks_config).pack(side="left")
+
+        # ===== 定时启动实例 =====
+        tk.Frame(c1, bg=BORDER, height=1).pack(fill="x", pady=(6, 4))
+        section_title(c1, "■  定时启动实例", GREEN)
+
+        launch_scroll_f = tk.Frame(c1, bg=CARD)
+        launch_scroll_f.pack(fill="both", expand=True)
+        launch_canvas = tk.Canvas(launch_scroll_f, bg=CARD, highlightthickness=0, height=100)
+        launch_sb = ttk.Scrollbar(launch_scroll_f, orient="vertical", command=launch_canvas.yview)
+        self.launch_tasks_frame = tk.Frame(launch_canvas, bg=CARD)
+        self.launch_tasks_frame.bind("<Configure>",
+            lambda e: launch_canvas.configure(scrollregion=launch_canvas.bbox("all")))
+        launch_canvas.create_window((0, 0), window=self.launch_tasks_frame, anchor="nw", tags="inner")
+        launch_canvas.configure(yscrollcommand=launch_sb.set)
+        launch_canvas.pack(side="left", fill="both", expand=True)
+        launch_sb.pack(side="right", fill="y")
+        self._launch_canvas = launch_canvas
+
+        lbtn = tk.Frame(c1, bg=CARD)
+        lbtn.pack(fill="x", pady=(6, 0))
+        RoundedButton(lbtn, text="+", command=self._add_launch_task,
+                      bg=GREEN, fg="white", font=("Consolas", 10, "bold"),
+                      padx=8, pady=1).pack(side="left", padx=(0, 4))
+        RoundedButton(lbtn, text="全部启动", command=lambda: self._start_all_launch(),
+                      bg=GREEN, fg="white", font=self.f_body, padx=8).pack(side="left", padx=(0, 4))
+        RoundedButton(lbtn, text="停止", command=lambda: self._stop_all_launch(),
+                      bg=TEXT_SUB, fg="white", font=self.f_body, padx=8).pack(side="left")
 
         # ============================================================
         # 卡片2：实例管理
@@ -1496,6 +1526,431 @@ class EmulatorShutdownApp:
                 t["vars"]["st_lbl"].config(text="已停止", fg=TEXT_LIGHT)
         self._save_tasks_config()
 
+    # ---------- 定时启动任务 ----------
+
+    def _add_launch_task(self, data=None):
+        """添加一个定时启动任务"""
+        if data is None:
+            data = {}
+        tid = self.next_launch_id
+        self.next_launch_id += 1
+        widget = self._make_launch_task_row(tid, data)
+        self.launch_tasks.append(widget)
+        self._save_tasks_config()
+
+    def _make_launch_task_row(self, task_id, data):
+        """构建定时启动任务行"""
+        mode = data.get("mode", "fixed")
+        hour = data.get("hour", 8)
+        minute = data.get("minute", 0)
+        cd_min = data.get("countdown_min", 30)
+        enabled = data.get("enabled", True)
+        inst_names = data.get("instances", [])
+
+        color = GREEN
+
+        task = {
+            "id": task_id, "type": "launch",
+            "running": False, "thread": None,
+            "remaining": 0, "target_ts": 0, "enabled": enabled,
+            "mode": mode, "hour": hour, "minute": minute, "cd_min": cd_min,
+            "instances": list(inst_names),
+            "update_id": None, "auto_reset_id": None, "_pending_update": False,
+        }
+
+        frame = tk.Frame(self.launch_tasks_frame, bg=CARD, bd=0)
+        frame.pack(fill="x")
+        tk.Frame(frame, bg=BORDER, height=1).pack(fill="x", side="bottom")
+
+        row = tk.Frame(frame, bg=CARD)
+        row.pack(fill="x", pady=4)
+
+        # 启用勾选
+        en_var = tk.BooleanVar(value=enabled)
+        tk.Checkbutton(row, variable=en_var, bg=CARD,
+                       activebackground=CARD, selectcolor=CARD,
+                       command=lambda: self._on_launch_en_toggle(task, en_var)).pack(side="left", padx=(0, 3))
+        task["en_var"] = en_var
+
+        # 模式
+        mode_var = tk.StringVar(value="定点" if mode == "fixed" else "倒计时")
+        mode_combo = ttk.Combobox(row, textvariable=mode_var,
+                                   values=["定点", "倒计时"], width=4,
+                                   state="readonly", font=("Microsoft YaHei", 8))
+        mode_combo.pack(side="left", padx=(0, 3))
+
+        # 时间输入
+        tf = tk.Frame(row, bg=CARD)
+        tf.pack(side="left")
+        ff = tk.Frame(tf, bg=CARD)
+        h_spin = ttk.Spinbox(ff, from_=0, to=23, width=2,
+                              font=("Consolas", 8), format="%02.0f")
+        h_spin.pack(side="left")
+        h_spin.set(f"{hour:02d}")
+        tk.Label(ff, text=":", font=("Consolas", 8), bg=CARD, fg=TEXT).pack(side="left")
+        m_spin = ttk.Spinbox(ff, from_=0, to=59, width=2,
+                              font=("Consolas", 8), format="%02.0f")
+        m_spin.pack(side="left")
+        m_spin.set(f"{minute:02d}")
+
+        cf = tk.Frame(tf, bg=CARD)
+        cd_spin = ttk.Spinbox(cf, from_=1, to=999, width=3, font=("Consolas", 8))
+        cd_spin.pack(side="left")
+        cd_spin.set(str(cd_min))
+        tk.Label(cf, text="分", font=("Microsoft YaHei", 8),
+                 bg=CARD, fg=TEXT_SUB).pack(side="left", padx=1)
+
+        def _switch_mode():
+            m = mode_var.get()
+            task["mode"] = "countdown" if m == "倒计时" else "fixed"
+            if task["mode"] == "fixed":
+                cf.pack_forget(); ff.pack(side="left")
+            else:
+                ff.pack_forget(); cf.pack(side="left")
+            self._save_tasks_config()
+
+        mode_combo.bind("<<ComboboxSelected>>", lambda e: _switch_mode())
+        if mode == "fixed":
+            ff.pack(side="left"); cf.pack_forget()
+        else:
+            ff.pack_forget(); cf.pack(side="left")
+
+        # 实例选择
+        inst_btn = RoundedButton(row, text=f"选择实例 ({len(inst_names)})",
+                                 command=lambda: self._pick_instances(task, inst_btn),
+                                 bg=GREEN, fg="white", font=("Microsoft YaHei", 7),
+                                 padx=6, pady=1)
+        inst_btn.pack(side="left", padx=(4, 0))
+
+        # 状态
+        st_lbl = tk.Label(row, text="待启动", font=("Microsoft YaHei", 8),
+                          fg=TEXT_LIGHT, bg=CARD, anchor="w")
+        st_lbl.pack(side="left", padx=(6, 0))
+
+        # 按钮
+        act_btn = RoundedButton(row, text="▶", command=lambda: _toggle(),
+                                 bg=color, fg="white",
+                                 font=("Consolas", 8, "bold"), padx=6, pady=0)
+        act_btn.pack(side="right", padx=(2, 0))
+        RoundedButton(row, text="×", command=lambda: _delete(),
+                      bg=TEXT_LIGHT, fg="white",
+                      font=("Consolas", 8, "bold"), padx=4, pady=0).pack(side="right", padx=(2, 0))
+
+        def _toggle():
+            _stop() if task["running"] else _start()
+
+        def _calc_ts():
+            try:
+                if task["mode"] == "fixed":
+                    h, m = int(h_spin.get()), int(m_spin.get())
+                    t = datetime.now().replace(hour=h, minute=m, second=0, microsecond=0)
+                    if t <= datetime.now():
+                        t += timedelta(days=1)
+                    return t.timestamp()
+                else:
+                    return (datetime.now() + timedelta(minutes=int(cd_spin.get()))).timestamp()
+            except ValueError:
+                return None
+
+        def _start():
+            if task["running"] or not task["enabled"]:
+                return
+            if not task["instances"]:
+                messagebox.showinfo("提示", "请先选择要启动的实例")
+                return
+            ts = _calc_ts()
+            if ts is None:
+                return
+            task["running"] = True
+            task["target_ts"] = ts
+            task["thread"] = threading.Thread(target=_loop, daemon=True)
+            task["thread"].start()
+            act_btn.config_bg(TEXT_LIGHT); act_btn.set_text("■")
+            _update_status()
+            self._save_tasks_config()
+
+        def _stop():
+            task["running"] = False
+            for k in ("update_id", "auto_reset_id"):
+                if task.get(k):
+                    try: self.root.after_cancel(task[k])
+                    except: pass
+                    task[k] = None
+            task["thread"] = None
+            act_btn.config_bg(color); act_btn.set_text("▶")
+            st_lbl.config(text="待启动", fg=TEXT_LIGHT)
+            self._save_tasks_config()
+
+        def _loop():
+            while task["running"]:
+                rem = int(task["target_ts"] - time.time())
+                if rem <= 0:
+                    self.root.after(0, _time_up); break
+                task["remaining"] = rem
+                if not task["_pending_update"]:
+                    task["_pending_update"] = True
+                    self.root.after(0, _update_status)
+                time.sleep(0.5)
+
+        def _time_up():
+            if not task["running"]:
+                return
+            task["running"] = False
+            act_btn.config_bg(color); act_btn.set_text("▶")
+            st_lbl.config(text="启动中…", fg=YELLOW)
+
+            dnconsole = self._ld_paths.get("dnconsole")
+            if not dnconsole or not os.path.isfile(dnconsole):
+                st_lbl.config(text="未找到 dnconsole", fg=RED)
+                return
+
+            instances = task["instances"][:]
+            if not instances:
+                st_lbl.config(text="无实例可选", fg=TEXT_LIGHT)
+                return
+
+            def _work():
+                results = staggered_launch(
+                    dnconsole, instances, interval_seconds=5,
+                    on_status=lambda t: self.root.after(0, lambda: st_lbl.config(text=t[:30], fg=YELLOW)),
+                )
+                ok = sum(1 for _, s, _ in results if s)
+                self.root.after(0, lambda: st_lbl.config(
+                    text=f"完成 {ok}/{len(results)}", fg=GREEN if ok == len(results) else YELLOW))
+                self.root.after(0, self._scan_and_display_instances)
+                if task["mode"] == "fixed":
+                    task["auto_reset_id"] = self.root.after(2000, lambda: self._autoreset_launch(task))
+                self._save_tasks_config()
+
+            threading.Thread(target=_work, daemon=True).start()
+
+        def _auto_reset_local():
+            task["auto_reset_id"] = None
+            if not task["enabled"]:
+                return
+            h, m = int(h_spin.get()), int(m_spin.get())
+            target = datetime.now().replace(hour=h, minute=m, second=0, microsecond=0) + timedelta(days=1)
+            task["target_ts"] = target.timestamp()
+            task["running"] = True
+            task["thread"] = threading.Thread(target=_loop, daemon=True)
+            task["thread"].start()
+            act_btn.config_bg(TEXT_LIGHT); act_btn.set_text("■")
+            st_lbl.config(text=f"明天 {h:02d}:{m:02d}", fg=GREEN)
+            self._save_tasks_config()
+
+        def _update_status():
+            task["_pending_update"] = False
+            if not task["enabled"]:
+                st_lbl.config(text="已禁用", fg=TEXT_LIGHT); return
+            if task["running"]:
+                rem = task["remaining"]
+                h, m, s = rem // 3600, (rem % 3600) // 60, rem % 60
+                if task["mode"] == "fixed":
+                    ts = datetime.fromtimestamp(task["target_ts"]).strftime("%H:%M")
+                    st_lbl.config(text=f"{ts} {h:02d}:{m:02d}:{s:02d}", fg=YELLOW)
+                else:
+                    st_lbl.config(text=f"{h:02d}:{m:02d}:{s:02d}", fg=YELLOW)
+            else:
+                st_lbl.config(text="待启动", fg=TEXT_LIGHT)
+
+        def _delete():
+            if task["running"]:
+                _stop()
+            frame.destroy()
+            for i, t in enumerate(self.launch_tasks):
+                if t["id"] == task_id:
+                    self.launch_tasks.pop(i); break
+            self._save_tasks_config()
+
+        task["_auto_reset_fn"] = _auto_reset_local
+        task["vars"] = {
+            "h_spin": h_spin, "m_spin": m_spin, "cd_spin": cd_spin,
+            "st_lbl": st_lbl, "act_btn": act_btn, "inst_btn": inst_btn,
+        }
+        return task
+
+    def _on_launch_en_toggle(self, task, en_var):
+        task["enabled"] = en_var.get()
+        if not task["enabled"] and task["running"]:
+            task["running"] = False
+            task["vars"]["act_btn"].config_bg(GREEN)
+            task["vars"]["act_btn"].set_text("▶")
+            task["vars"]["st_lbl"].config(text="已禁用", fg=TEXT_LIGHT)
+        self._save_tasks_config()
+
+    def _pick_instances(self, task, btn):
+        """弹出实例选择对话框"""
+        if not self._instances:
+            messagebox.showinfo("提示", "未检测到实例，请先扫描")
+            return
+
+        win = tk.Toplevel(self.root)
+        win.title("选择实例")
+        win.geometry("300x350")
+        win.configure(bg=BG)
+        win.transient(self.root)
+        win.grab_set()
+
+        tk.Label(win, text="勾选要启动的实例:", font=self.f_sec,
+                 bg=BG, fg=TEXT).pack(pady=(8, 4))
+
+        f = tk.Frame(win, bg=BG)
+        f.pack(fill="both", expand=True, padx=12)
+
+        canvas = tk.Canvas(f, bg=CARD, highlightthickness=0)
+        sb = ttk.Scrollbar(f, orient="vertical", command=canvas.yview)
+        inner = tk.Frame(canvas, bg=CARD)
+        inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=inner, anchor="nw", tags="inner")
+        canvas.configure(yscrollcommand=sb.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        sb.pack(side="right", fill="y")
+
+        vars_dict = {}
+        for inst in self._instances:
+            checked = inst['name'] in task['instances']
+            var = tk.BooleanVar(value=checked)
+            cb = tk.Checkbutton(inner, text=inst['name'], variable=var,
+                                bg=CARD, fg=TEXT, activebackground=CARD,
+                                selectcolor=CARD, anchor="w")
+            cb.pack(fill="x", padx=8, pady=1)
+            vars_dict[inst['name']] = var
+
+        def _confirm():
+            selected = [name for name, var in vars_dict.items() if var.get()]
+            if not selected:
+                messagebox.showinfo("提示", "请至少选一个实例")
+                return
+            task['instances'] = selected
+            btn.set_text(f"选择实例 ({len(selected)})")
+            self._save_tasks_config()
+            win.destroy()
+
+        RoundedButton(win, text="确定", command=_confirm,
+                      bg=GREEN, fg="white", font=("Microsoft YaHei", 9),
+                      padx=16).pack(pady=(6, 10))
+
+    def _start_all_launch(self):
+        """全部启动所有定时启动任务"""
+        for t in self.launch_tasks:
+            if t["enabled"] and not t["running"]:
+                self._inline_start_launch(t)
+
+    def _inline_start_launch(self, t):
+        if t["running"] or not t["enabled"]:
+            return
+        if not t["instances"]:
+            return
+        try:
+            if t["mode"] == "fixed":
+                h = int(t["vars"]["h_spin"].get())
+                m = int(t["vars"]["m_spin"].get())
+                target = datetime.now().replace(hour=h, minute=m, second=0, microsecond=0)
+                if target <= datetime.now():
+                    target += timedelta(days=1)
+                ts = target.timestamp()
+            else:
+                ts = (datetime.now() + timedelta(minutes=int(t["vars"]["cd_spin"].get()))).timestamp()
+        except ValueError:
+            return
+        t["running"] = True; t["target_ts"] = ts
+        t["thread"] = threading.Thread(target=self._make_launch_loop_fn(t), daemon=True)
+        t["thread"].start()
+        t["vars"]["act_btn"].config_bg(TEXT_LIGHT)
+        t["vars"]["act_btn"].set_text("■")
+        self._update_launch_status(t)
+        self._save_tasks_config()
+
+    def _make_launch_loop_fn(self, t):
+        def _loop():
+            while t["running"]:
+                rem = int(t["target_ts"] - time.time())
+                if rem <= 0:
+                    self.root.after(0, lambda: self._launch_task_time_up(t)); break
+                t["remaining"] = rem
+                if not t.get("_pending_update"):
+                    t["_pending_update"] = True
+                    self.root.after(0, lambda: self._update_launch_status(t))
+                time.sleep(0.5)
+        return _loop
+
+    def _launch_task_time_up(self, t):
+        if not t["running"]:
+            return
+        t["running"] = False
+        t["vars"]["act_btn"].config_bg(GREEN)
+        t["vars"]["act_btn"].set_text("▶")
+        t["vars"]["st_lbl"].config(text="启动中…", fg=YELLOW)
+
+        dnconsole = self._ld_paths.get("dnconsole")
+        if not dnconsole or not os.path.isfile(dnconsole):
+            t["vars"]["st_lbl"].config(text="未找到 dnconsole", fg=RED)
+            return
+
+        instances = t["instances"][:]
+        if not instances:
+            t["vars"]["st_lbl"].config(text="无实例可选", fg=TEXT_LIGHT)
+            return
+
+        def _work():
+            results = staggered_launch(
+                dnconsole, instances, interval_seconds=5,
+                on_status=lambda s: self.root.after(0, lambda: t["vars"]["st_lbl"].config(text=s[:30], fg=YELLOW)),
+            )
+            ok = sum(1 for _, s, _ in results if s)
+            self.root.after(0, lambda: t["vars"]["st_lbl"].config(
+                text=f"完成 {ok}/{len(results)}", fg=GREEN if ok == len(results) else YELLOW))
+            self.root.after(0, self._scan_and_display_instances)
+            if t["mode"] == "fixed":
+                t["auto_reset_id"] = self.root.after(2000, lambda: self._autoreset_launch(t))
+            self._save_tasks_config()
+
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _autoreset_launch(self, t):
+        t["auto_reset_id"] = None
+        if not t["enabled"]:
+            return
+        h, m = int(t["vars"]["h_spin"].get()), int(t["vars"]["m_spin"].get())
+        target = datetime.now().replace(hour=h, minute=m, second=0, microsecond=0) + timedelta(days=1)
+        t["target_ts"] = target.timestamp()
+        t["running"] = True
+        t["thread"] = threading.Thread(target=self._make_launch_loop_fn(t), daemon=True)
+        t["thread"].start()
+        t["vars"]["act_btn"].config_bg(TEXT_LIGHT)
+        t["vars"]["act_btn"].set_text("■")
+        t["vars"]["st_lbl"].config(text=f"明天 {h:02d}:{m:02d}", fg=GREEN)
+        self._save_tasks_config()
+
+    def _update_launch_status(self, t):
+        t["_pending_update"] = False
+        if not t["enabled"]:
+            t["vars"]["st_lbl"].config(text="已禁用", fg=TEXT_LIGHT); return
+        if t["running"]:
+            rem = t["remaining"]
+            h, m, s = rem // 3600, (rem % 3600) // 60, rem % 60
+            if t["mode"] == "fixed":
+                ts = datetime.fromtimestamp(t["target_ts"]).strftime("%H:%M")
+                t["vars"]["st_lbl"].config(text=f"{ts} {h:02d}:{m:02d}:{s:02d}", fg=YELLOW)
+            else:
+                t["vars"]["st_lbl"].config(text=f"{h:02d}:{m:02d}:{s:02d}", fg=YELLOW)
+        else:
+            t["vars"]["st_lbl"].config(text="待启动", fg=TEXT_LIGHT)
+
+    def _stop_all_launch(self):
+        """停止所有定时启动任务"""
+        for t in self.launch_tasks:
+            if t.get("auto_reset_id"):
+                try: self.root.after_cancel(t["auto_reset_id"])
+                except: pass
+                t["auto_reset_id"] = None
+            if t["running"]:
+                t["running"] = False
+                t["vars"]["act_btn"].config_bg(GREEN)
+                t["vars"]["act_btn"].set_text("▶")
+                t["vars"]["st_lbl"].config(text="已停止", fg=TEXT_LIGHT)
+        self._save_tasks_config()
+
     # ---------- 立即关闭（原有按钮，使用优雅关闭） ----------
 
     def _on_kill_now(self):
@@ -1580,6 +2035,22 @@ class EmulatorShutdownApp:
             except (KeyError, ValueError):
                 pass
         config["shutdown_tasks"] = shutdown_data
+
+        launch_data = []
+        for t in self.launch_tasks:
+            try:
+                launch_data.append({
+                    "mode": t["mode"],
+                    "hour": int(t["vars"]["h_spin"].get()),
+                    "minute": int(t["vars"]["m_spin"].get()),
+                    "countdown_min": int(t["vars"]["cd_spin"].get()),
+                    "enabled": t["en_var"].get(),
+                    "instances": list(t.get("instances", [])),
+                })
+            except (KeyError, ValueError):
+                pass
+        config["launch_tasks"] = launch_data
+
         config["auto_launch"] = self.auto_launch_var.get()
         config["auto_launch_instances"] = list(self._auto_launch_instances)
         config["shutdown_always"] = self.shutdown_var.get()
@@ -1592,12 +2063,19 @@ class EmulatorShutdownApp:
         if shutdown_data is not None:
             for td in shutdown_data:
                 self._add_task("shutdown", td)
+        launch_data = config.get("launch_tasks", None)
+        if launch_data is not None:
+            for td in launch_data:
+                self._add_launch_task(td)
         self.auto_launch_var.set(config.get("auto_launch", False))
         self.shutdown_var.set(config.get("shutdown_always", True))
         self.restart_var.set(config.get("restart_always", False))
         for t in self.shutdown_tasks:
             if t["enabled"] and t["mode"] == "fixed":
                 self._inline_start(t)
+        for t in self.launch_tasks:
+            if t["enabled"] and t["mode"] == "fixed" and t.get("instances"):
+                self._inline_start_launch(t)
 
     # ---------- 实例管理 ----------
 
