@@ -1199,35 +1199,144 @@ def auto_detect_mumu():
 
 def scan_mumu_instances(mumu_manager_path):
     """扫描 MuMu 模拟器实例
-    优先从磁盘扫描 vms/ 目录，不依赖 MuMuManager.exe 的输出。
-    如果扫描不到则回退到 MuMuManager.exe 调用。
+    优先用 MuMuManager.exe 获取（兼容各种环境），降级到磁盘扫描 vms/ 目录。
+    搜索多个可能的 vms 位置，确保不同安装方式都能找到。
     返回: [{"index": "0", "name": "...", "running": bool, "hyperv": bool}, ...]
     """
-    import json
+    import json, tempfile
     if not mumu_manager_path or not os.path.isfile(mumu_manager_path):
         return []
 
-    # 计算 vms 目录：MuMuManager.exe 在 nx_main/ 下，vms 在父目录
     mgr_dir = os.path.dirname(mumu_manager_path)          # .../nx_main
     install_dir = os.path.dirname(mgr_dir)                 # .../MuMu Player 12
-    vms_dir = os.path.join(install_dir, "vms")             # .../MuMu Player 12/vms
+    user_docs = os.path.expanduser("~\\Documents")
+
+    # ========== 第1招：MuMuManager.exe 直调 ==========
+    # 从 GUI 进程调控制台程序，各种环境都有可能抑制 stdout。
+    # 试多种方式：直调、cmd /c、临时 bat，哪种能出数据就用哪种。
+    def _try_mumumanager():
+        """尝试用 MuMuManager 获取实例列表"""
+        attempts = []
+        env = os.environ.copy()
+        env["PATH"] = mgr_dir + os.pathsep + env.get("PATH", "")
+
+        # 尝试 A：subprocess.run 直调
+        try:
+            r = subprocess.run(
+                [mumu_manager_path, "info", "--vmindex", "all"],
+                capture_output=True, timeout=10, cwd=mgr_dir, env=env,
+            )
+            raw = (r.stdout or b"").decode('utf-8', errors='replace').strip()
+            if raw:
+                return json.loads(raw)
+        except Exception:
+            pass
+
+        # 尝试 B：cmd /c 中转
+        try:
+            r = subprocess.run(
+                ["cmd.exe", "/c", f'"{mumu_manager_path}" info --vmindex all'],
+                capture_output=True, timeout=15, cwd=mgr_dir,
+            )
+            raw = (r.stdout or b"").decode('utf-8', errors='replace').strip()
+            if raw:
+                return json.loads(raw)
+        except Exception:
+            pass
+
+        # 尝试 C：临时 bat 文件 > stdout 重定向
+        try:
+            out_file = os.path.join(tempfile.gettempdir(), f"_mumu_scan_{os.getpid()}.txt")
+            bat_content = f'@echo off\r\n"{mumu_manager_path}" info --vmindex all > "{out_file}"\r\n'
+            bat_path = os.path.join(tempfile.gettempdir(), f"_mumu_scan_{os.getpid()}.bat")
+            with open(bat_path, 'w', encoding='utf-8') as f:
+                f.write(bat_content)
+            subprocess.run([bat_path], timeout=30, cwd=mgr_dir,
+                           creationflags=subprocess.CREATE_NO_WINDOW)
+            if os.path.isfile(out_file):
+                with open(out_file, 'r', encoding='utf-8') as f:
+                    raw = f.read().strip()
+                try:
+                    os.unlink(bat_path)
+                except Exception:
+                    pass
+                try:
+                    os.unlink(out_file)
+                except Exception:
+                    pass
+                if raw:
+                    return json.loads(raw)
+        except Exception:
+            pass
+
+        return None
+
+    try:
+        data = _try_mumumanager()
+        if data and isinstance(data, dict):
+            instances = []
+            for idx, info in data.items():
+                instances.append({
+                    "index": str(info.get("index", idx)),
+                    "name": info.get("name", f"MuMu-{idx}"),
+                    "running": info.get("is_process_started", False),
+                    "android_running": info.get("is_android_started", False),
+                    "hyperv": info.get("hyperv_enabled", False),
+                    "disk_size": info.get("disk_size_bytes", 0),
+                    "cpu": "?",
+                    "memory": "?",
+                    "root": False,
+                })
+            instances.sort(key=lambda x: int(x["index"]))
+            # 补充 vm_config.json 里的 CPU/内存/Root
+            for inst in instances:
+                for dir_candidate in [os.path.join(install_dir, "vms"),
+                                      os.path.join(user_docs, "MuMu12", "vms"),
+                                      os.path.join(user_docs, "MuMuPlayer-12.0", "vms")]:
+                    cfg = os.path.join(dir_candidate, f"MuMuPlayer-12.0-{inst['index']}", "configs", "vm_config.json")
+                    if os.path.isfile(cfg):
+                        try:
+                            with open(cfg, 'r', encoding='utf-8') as f:
+                                vm = json.load(f).get("vm", {})
+                                inst["cpu"] = vm.get("cpu", "?")
+                                inst["memory"] = vm.get("memory", "?")
+                                inst["root"] = vm.get("root", "").lower() == "true"
+                        except Exception:
+                            pass
+                        break
+            return instances
+    except Exception as e:
+        _log_error(f"[MUMU_SCAN] MuMuManager 整体异常: {e}")
+
+    # ========== 第2招：磁盘扫描（MuMuManager 不可用时降级）==========
+    vms_candidates = []
+    # 安装目录下的 vms
+    inst_vms = os.path.join(install_dir, "vms")
+    if os.path.isdir(inst_vms):
+        vms_candidates.append(inst_vms)
+    # 用户文档下的 vms
+    for sub in ["MuMu12", "MuMuPlayer-12.0"]:
+        p = os.path.join(user_docs, sub, "vms")
+        if os.path.isdir(p):
+            vms_candidates.append(p)
 
     instances = []
-
-    # 策略1：从磁盘扫描 vms/MuMuPlayer-12.0-N/ 目录
-    if os.path.isdir(vms_dir):
+    seen_indices = set()
+    for vms_dir in vms_candidates:
         for entry in sorted(os.listdir(vms_dir)):
             if not entry.startswith("MuMuPlayer-12.0-"):
                 continue
             inst_dir = os.path.join(vms_dir, entry)
             if not os.path.isdir(inst_dir):
                 continue
-            # 提取索引号
             try:
-                idx = entry.split("-")[-1]  # "MuMuPlayer-12.0-0" → "0"
+                idx = entry.split("-")[-1]
             except Exception:
                 continue
-            # 读取 vm_config.json
+            if idx in seen_indices:
+                continue
+            seen_indices.add(idx)
+
             vm_cfg = {}
             cfg_path = os.path.join(inst_dir, "configs", "vm_config.json")
             if os.path.isfile(cfg_path):
@@ -1249,61 +1358,7 @@ def scan_mumu_instances(mumu_manager_path):
                 "root": vm.get("root", "").lower() == "true",
             })
 
-    if instances:
-        _log_error(f"[MUMU_SCAN] 磁盘扫描发现 {len(instances)} 个实例")
-        # 尝试用 MuMuManager 获取实例名称（不要也罢，但有更好）
-        try:
-            env = os.environ.copy()
-            env["PATH"] = mgr_dir + os.pathsep + env.get("PATH", "")
-            r = subprocess.run(
-                [mumu_manager_path, "info", "--vmindex", "all"],
-                capture_output=True, timeout=10,
-                cwd=mgr_dir, env=env,
-            )
-            # MuMuManager 输出的是 UTF-8 JSON，必须用 utf-8 解码
-            raw_stdout = (r.stdout or b"").decode('utf-8', errors='replace')
-            name_data = json.loads(raw_stdout)
-            if isinstance(name_data, dict):
-                for inst in instances:
-                    idx = inst["index"]
-                    if idx in name_data and isinstance(name_data[idx], dict):
-                        real_name = name_data[idx].get("name", "")
-                        if real_name:
-                            inst["name"] = real_name
-                            inst["running"] = name_data[idx].get("is_process_started", False)
-        except Exception:
-            pass
-        return instances
-
-    # 策略2：完全回退到 MuMuManager.exe（从 GUI 调可能拿不到输出）
-    _log_error(f"[MUMU_SCAN] 磁盘扫描无结果，尝试 MuMuManager.exe")
-    try:
-        env = os.environ.copy()
-        env["PATH"] = mgr_dir + os.pathsep + env.get("PATH", "")
-        r = subprocess.run(
-            [mumu_manager_path, "info", "--vmindex", "all"],
-            capture_output=True, timeout=15,
-            cwd=mgr_dir, env=env,
-        )
-        raw_stdout = (r.stdout or b"").decode('utf-8', errors='replace').strip()
-        _log_error(f"[MUMU_SCAN] MuMuManager rc={r.returncode}, stdout[:300]={raw_stdout[:300]}")
-        if raw_stdout:
-            data = json.loads(raw_stdout)
-            for idx, info in data.items():
-                instances.append({
-                    "index": str(info.get("index", idx)),
-                    "name": info.get("name", f"MuMu-{idx}"),
-                    "running": info.get("is_process_started", False),
-                    "android_running": info.get("is_android_started", False),
-                    "hyperv": info.get("hyperv_enabled", False),
-                    "disk_size": info.get("disk_size_bytes", 0),
-                })
-            instances.sort(key=lambda x: int(x["index"]))
-            _log_error(f"[MUMU_SCAN] MuMuManager 返回 {len(instances)} 个实例")
-            return instances
-    except Exception as e:
-        _log_error(f"[MUMU_SCAN] MuMuManager 异常: {e}")
-
+    _log_error(f"[MUMU_SCAN] 磁盘扫描发现 {len(instances)} 个实例")
     return instances
 
 
