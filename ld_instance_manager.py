@@ -458,9 +458,9 @@ def get_instance_summary(settings):
 # 配置快照
 # ============================================================
 
-def save_snapshot(vms_config_dir, multiplayer_config_dir, snapshot_base_dir):
+def save_snapshot(vms_config_dir, multiplayer_config_dir, snapshot_base_dir, mumu_vms_dir=None):
     """
-    保存配置快照
+    保存配置快照（同时备份 LDPlayer + MuMu 配置）
     返回: (快照目录路径, 消息)
     """
     if not vms_config_dir or not os.path.isdir(vms_config_dir):
@@ -471,7 +471,7 @@ def save_snapshot(vms_config_dir, multiplayer_config_dir, snapshot_base_dir):
     try:
         os.makedirs(snap_dir, exist_ok=True)
 
-        # 复制实例配置
+        # ---- 备份 LDPlayer 实例配置 ----
         count = 0
         for fname in os.listdir(vms_config_dir):
             if fname.endswith('.config'):
@@ -485,24 +485,46 @@ def save_snapshot(vms_config_dir, multiplayer_config_dir, snapshot_base_dir):
             if os.path.isfile(global_cfg):
                 shutil.copy2(global_cfg, os.path.join(snap_dir, 'leidians.config'))
 
+        # ---- 备份 MuMu 实例配置 ----
+        mumu_count = 0
+        if mumu_vms_dir and os.path.isdir(mumu_vms_dir):
+            # 在快照目录下建 mumu_configs/ 子目录
+            mumu_snap = os.path.join(snap_dir, "mumu_configs")
+            os.makedirs(mumu_snap, exist_ok=True)
+            for entry in sorted(os.listdir(mumu_vms_dir)):
+                if not entry.startswith("MuMuPlayer-12.0-"):
+                    continue
+                cfg_src = os.path.join(mumu_vms_dir, entry, "configs", "vm_config.json")
+                if os.path.isfile(cfg_src):
+                    try:
+                        shutil.copy2(cfg_src, os.path.join(mumu_snap, f"{entry}.json"))
+                        mumu_count += 1
+                    except Exception:
+                        pass
+
         # 写入元信息
         meta = {
             "timestamp": timestamp,
-            "instance_count": count,
+            "ldplayer_count": count,
+            "mumu_count": mumu_count,
             "vms_config_dir": vms_config_dir,
             "multiplayer_config_dir": multiplayer_config_dir,
+            "mumu_vms_dir": mumu_vms_dir,
         }
         with open(os.path.join(snap_dir, 'snapshot_meta.json'), 'w', encoding='utf-8') as f:
             json.dump(meta, f, ensure_ascii=False, indent=2)
 
-        return snap_dir, f"已保存 {count} 个实例配置到 {snap_dir}"
+        parts = [f"已备份 LDPlayer {count} 个实例"]
+        if mumu_count:
+            parts.append(f"MuMu {mumu_count} 个实例")
+        return snap_dir, "、".join(parts)
     except Exception as e:
         return None, f"保存失败: {str(e)}"
 
 
-def restore_snapshot(snapshot_dir, vms_config_dir, multiplayer_config_dir):
+def restore_snapshot(snapshot_dir, vms_config_dir, multiplayer_config_dir, mumu_vms_dir=None):
     """
-    恢复配置快照
+    恢复配置快照（同时恢复 LDPlayer + MuMu 配置）
     返回: (成功数, 消息)
     """
     if not os.path.isdir(snapshot_dir):
@@ -513,7 +535,7 @@ def restore_snapshot(snapshot_dir, vms_config_dir, multiplayer_config_dir):
     restored = 0
     errors = []
 
-    # 恢复实例配置
+    # 恢复 LDPlayer 实例配置
     for fname in os.listdir(snapshot_dir):
         if fname.endswith('.config') and fname.startswith('leidian'):
             src = os.path.join(snapshot_dir, fname)
@@ -533,10 +555,31 @@ def restore_snapshot(snapshot_dir, vms_config_dir, multiplayer_config_dir):
         except Exception as e:
             errors.append(f"leidians.config: {e}")
 
-    msg = f"已恢复 {restored} 个实例配置"
+    # 恢复 MuMu 实例配置
+    mumu_restored = 0
+    mumu_snap = os.path.join(snapshot_dir, "mumu_configs")
+    if os.path.isdir(mumu_snap) and mumu_vms_dir and os.path.isdir(mumu_vms_dir):
+        for fname in os.listdir(mumu_snap):
+            if not fname.endswith(".json"):
+                continue
+            inst_name = fname.replace(".json", "")  # MuMuPlayer-12.0-0
+            dst_dir = os.path.join(mumu_vms_dir, inst_name, "configs")
+            dst = os.path.join(dst_dir, "vm_config.json")
+            if not os.path.isdir(dst_dir):
+                continue
+            try:
+                shutil.copy2(os.path.join(mumu_snap, fname), dst)
+                mumu_restored += 1
+            except Exception as e:
+                errors.append(f"{fname}: {e}")
+
+    parts = [f"已恢复 LDPlayer {restored} 个实例"]
+    if mumu_restored:
+        parts.append(f"MuMu {mumu_restored} 个实例")
+    msg = "、".join(parts)
     if errors:
         msg += f"，{len(errors)} 个失败: " + "; ".join(errors)
-    return restored, msg
+    return restored + mumu_restored, msg
 
 
 def list_snapshots(snapshot_base_dir):

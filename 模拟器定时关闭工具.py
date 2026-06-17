@@ -585,7 +585,8 @@ def backup_config_files(backup_root):
 
 
 def graceful_kill_async(on_done, on_status=None, on_progress=None, 
-                         do_backup=False, do_shutdown=False, should_restart=False):
+                         do_backup=False, do_shutdown=False, should_restart=False,
+                         mumu_vms_dir=None):
     """
     后台优雅关闭模拟器进程，替代原 kill_emulators_async
     
@@ -651,7 +652,7 @@ def graceful_kill_async(on_done, on_status=None, on_progress=None,
                         mp_path = os.path.join(os.path.dirname(ld_p), 'ldmutiplayer', 'vms', 'config')
                         if os.path.isdir(mp_path):
                             mp_cfg_dir = mp_path
-                    save_snapshot(vms_cfg_dir, mp_cfg_dir, SNAPSHOT_DIR)
+                    save_snapshot(vms_cfg_dir, mp_cfg_dir, SNAPSHOT_DIR, mumu_vms_dir=mumu_vms_dir)
 
             if not procs:
                 elapsed = int(time.time() - start_ts)
@@ -1157,7 +1158,7 @@ class EmulatorShutdownApp:
         self._ld_paths = {}
         self._instances = []
         self._inst_vars = []
-        # MuMu 实例管理
+        # MuMu 相关
         self._mumu_path = None
         self._mumu_instances = []
 
@@ -1678,7 +1679,8 @@ class EmulatorShutdownApp:
                     task["auto_reset_id"] = self.root.after(2000, lambda: self._auto_reset_task(task))
                 self._save_tasks_config()
             graceful_kill_async(on_done=_on_done, do_backup=True, do_shutdown=should_shutdown,
-                               should_restart=self.restart_var.get())
+                               should_restart=self.restart_var.get(),
+                               mumu_vms_dir=self._get_mumu_vms_dir())
 
         def _auto_reset_task_local():
             task["auto_reset_id"] = None
@@ -1820,7 +1822,8 @@ class EmulatorShutdownApp:
                 t["auto_reset_id"] = self.root.after(2000, lambda: self._auto_reset_task(t))
             self._save_tasks_config()
         graceful_kill_async(on_done=_on_done, do_backup=True, do_shutdown=should_shutdown,
-                           should_restart=self.restart_var.get())
+                           should_restart=self.restart_var.get(),
+                           mumu_vms_dir=self._get_mumu_vms_dir())
 
     def _update_task_status(self, t):
         t["_pending_update"] = False
@@ -2354,6 +2357,7 @@ class EmulatorShutdownApp:
             do_backup=True,
             do_shutdown=should_shutdown,
             should_restart=self.restart_var.get(),
+            mumu_vms_dir=self._get_mumu_vms_dir(),
         )
 
     def _on_kill_done(self, count, success, fail_count, failed_names, backup_msg, shutdown_executed):
@@ -2742,6 +2746,15 @@ class EmulatorShutdownApp:
         self._save_all_paths()
         self._scan_and_display_instances()
 
+    def _get_mumu_vms_dir(self):
+        """从 _mumu_path 计算 MuMu vms 目录"""
+        if not self._mumu_path:
+            return None
+        mgr_dir = os.path.dirname(self._mumu_path)
+        install_dir = os.path.dirname(mgr_dir)
+        vms = os.path.join(install_dir, "vms")
+        return vms if os.path.isdir(vms) else None
+
     def _refresh_instances(self):
         """刷新实例列表：重新扫描实例 + 尝试补全缺失路径"""
         # 如果 MuMu 路径未设置，再次检测
@@ -2988,7 +3001,7 @@ class EmulatorShutdownApp:
                     snapshots = list_snapshots(SNAPSHOT_DIR)
                     if snapshots:
                         latest = snapshots[0]
-                        count, msg = restore_snapshot(latest['path'], vms_cfg, mp_cfg)
+                        count, msg = restore_snapshot(latest['path'], vms_cfg, mp_cfg, mumu_vms_dir=self._get_mumu_vms_dir())
                         restored = True
                         self.root.after(0, lambda s=msg: self.launch_status_var.set(f"已恢复: {s}"))
                         time.sleep(1)
@@ -3163,7 +3176,7 @@ class EmulatorShutdownApp:
         if mp:
             mp_cfg = os.path.join(mp, "vms", "config")
 
-        snap_dir, msg = save_snapshot(vms_cfg, mp_cfg, SNAPSHOT_DIR)
+        snap_dir, msg = save_snapshot(vms_cfg, mp_cfg, SNAPSHOT_DIR, mumu_vms_dir=self._get_mumu_vms_dir())
         if snap_dir:
             messagebox.showinfo("保存成功", msg)
         else:
@@ -3206,7 +3219,7 @@ class EmulatorShutdownApp:
             mp = self._ld_paths.get("multiplayer_path")
             if mp:
                 mp_cfg = os.path.join(mp, "vms", "config")
-            count, msg = restore_snapshot(snap['path'], vms_cfg, mp_cfg)
+            count, msg = restore_snapshot(snap['path'], vms_cfg, mp_cfg, mumu_vms_dir=self._get_mumu_vms_dir())
             messagebox.showinfo("恢复完成", msg)
             win.destroy()
             self._scan_and_display_instances()
@@ -3482,7 +3495,7 @@ class EmulatorShutdownApp:
         mp = self._ld_paths.get("multiplayer_path")
         if mp:
             mp_cfg = os.path.join(mp, "vms", "config")
-        count, msg = restore_snapshot(snap['path'], vms_cfg, mp_cfg)
+        count, msg = restore_snapshot(snap['path'], vms_cfg, mp_cfg, mumu_vms_dir=self._get_mumu_vms_dir())
         messagebox.showinfo("恢复完成", msg)
         self._scan_and_display_instances()
 
