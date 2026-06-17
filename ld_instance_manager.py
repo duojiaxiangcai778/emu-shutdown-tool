@@ -1257,10 +1257,12 @@ def scan_mumu_instances(mumu_manager_path):
             env["PATH"] = mgr_dir + os.pathsep + env.get("PATH", "")
             r = subprocess.run(
                 [mumu_manager_path, "info", "--vmindex", "all"],
-                capture_output=True, text=True, timeout=10,
+                capture_output=True, timeout=10,
                 cwd=mgr_dir, env=env,
             )
-            name_data = json.loads(r.stdout or "{}")
+            # MuMuManager 输出的是 UTF-8 JSON，必须用 utf-8 解码
+            raw_stdout = (r.stdout or b"").decode('utf-8', errors='replace')
+            name_data = json.loads(raw_stdout)
             if isinstance(name_data, dict):
                 for inst in instances:
                     idx = inst["index"]
@@ -1280,13 +1282,13 @@ def scan_mumu_instances(mumu_manager_path):
         env["PATH"] = mgr_dir + os.pathsep + env.get("PATH", "")
         r = subprocess.run(
             [mumu_manager_path, "info", "--vmindex", "all"],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True, timeout=15,
             cwd=mgr_dir, env=env,
         )
-        stdout = (r.stdout or "").strip()
-        _log_error(f"[MUMU_SCAN] MuMuManager rc={r.returncode}, stdout[:300]={stdout[:300]}")
-        if stdout:
-            data = json.loads(stdout)
+        raw_stdout = (r.stdout or b"").decode('utf-8', errors='replace').strip()
+        _log_error(f"[MUMU_SCAN] MuMuManager rc={r.returncode}, stdout[:300]={raw_stdout[:300]}")
+        if raw_stdout:
+            data = json.loads(raw_stdout)
             for idx, info in data.items():
                 instances.append({
                     "index": str(info.get("index", idx)),
