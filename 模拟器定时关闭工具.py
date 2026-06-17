@@ -2798,28 +2798,38 @@ class EmulatorShutdownApp:
                     idx = inst['index']
                     name = inst['name']
                     running = inst['running']
-                    hyperv = inst['hyperv']
 
                     display_name = f"MuMu-{idx} {name}"
 
-                    # 实例信息
-                    info_text = f"Hyper-V:{'✓' if hyperv else '✗'}  {inst.get('disk_size', 0)//1024//1024//1024}G"
-
-                    # 操作按钮（单个启动/停止）
-                    def make_launch_fn(i):
-                        return lambda: self._on_mumu_launch_one(i)
-                    def make_shutdown_fn(i):
-                        return lambda: self._on_mumu_shutdown_one(i)
+                    # 实例信息：从磁盘扫描来的 CPU/内存/Root
+                    cpu = inst.get('cpu', '?')
+                    mem = inst.get('memory', '?')
+                    root = inst.get('root', False)
+                    root_mark = "✓" if root else "✗"
+                    try:
+                        mem_int = int(float(mem))
+                        mem_str = f"{mem_int}M"
+                    except (ValueError, TypeError):
+                        mem_str = f"{mem}M"
+                    info_text = f"{cpu}核 {mem_str} Root:{root_mark}"
 
                     tk.Label(row, text=display_name, font=("Microsoft YaHei", 9, "bold"),
                              bg=CARD, fg=TEXT, width=18, anchor="w").pack(side="left")
                     tk.Label(row, text=info_text, font=("Microsoft YaHei", 9),
-                             bg=CARD, fg=TEXT, width=20, anchor="w").pack(side="left")
+                             bg=CARD, fg=TEXT, width=22, anchor="w").pack(side="left")
 
                     status = "运行中" if running else "已停止"
                     color = GREEN if running else TEXT_LIGHT
                     tk.Label(row, text=status, font=("Microsoft YaHei", 9),
-                             bg=CARD, fg=color, width=8, anchor="w").pack(side="left")
+                             bg=CARD, fg=color, width=6, anchor="w").pack(side="left")
+
+                    # 单个启动/关闭按钮
+                    RoundedButton(row, text="▶", command=lambda i=idx: self._on_mumu_launch_one(i),
+                                  bg=GREEN, fg="white", font=("Consolas", 7, "bold"),
+                                  padx=4, pady=0).pack(side="right", padx=(1, 0))
+                    RoundedButton(row, text="⏹", command=lambda i=idx: self._on_mumu_shutdown_one(i),
+                                  bg=RED, fg="white", font=("Consolas", 7, "bold"),
+                                  padx=4, pady=0).pack(side="right", padx=(1, 0))
 
             # 更新路径显示 — 状态信息直接看实例列表，不额外显示
             pass
