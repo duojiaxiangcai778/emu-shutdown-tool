@@ -2793,7 +2793,16 @@ class EmulatorShutdownApp:
                     status = "运行中" if inst['running'] else "已停止"
                     color = GREEN if inst['running'] else TEXT_LIGHT
                     tk.Label(row, text=status, font=("Microsoft YaHei", 9),
-                             bg=CARD, fg=color, width=8, anchor="w").pack(side="left")
+                             bg=CARD, fg=color, width=6, anchor="w").pack(side="left")
+
+                    # 单个启动/关闭按钮
+                    inst_name = inst['name']
+                    RoundedButton(row, text="▶", command=lambda n=inst_name: self._on_ld_launch_one(n),
+                                  bg=GREEN, fg="white", font=("Consolas", 7, "bold"),
+                                  padx=4, pady=0).pack(side="right", padx=(1, 0))
+                    RoundedButton(row, text="⏹", command=lambda n=inst_name: self._on_ld_stop_one(n),
+                                  bg=RED, fg="white", font=("Consolas", 7, "bold"),
+                                  padx=4, pady=0).pack(side="right", padx=(1, 0))
 
             # >>> MuMu 实例 <<<
             if mumu_instances:
@@ -3525,6 +3534,51 @@ class EmulatorShutdownApp:
                     success += 1
             self.root.after(0, lambda: messagebox.showinfo(
                 "关闭完成", f"成功 {success}/{total}"))
+            self.root.after(500, self._scan_and_display_instances)
+        threading.Thread(target=_work, daemon=True).start()
+
+    # ---------- LDPlayer 单实例控制 ----------
+
+    def _on_ld_launch_one(self, inst_name):
+        """启动单个 LDPlayer 实例"""
+        dnconsole = self._ld_paths.get("dnconsole")
+        if not dnconsole or not os.path.isfile(dnconsole):
+            messagebox.showerror("错误", "未找到 LDPlayer 命令行工具")
+            return
+        def _work():
+            ok, msg = launch_instance(dnconsole, inst_name)
+            self.root.after(0, lambda: messagebox.showinfo(
+                "启动结果" if ok else "启动失败", msg))
+            self.root.after(500, self._scan_and_display_instances)
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _on_ld_stop_one(self, inst_name):
+        """关闭单个 LDPlayer 实例"""
+        dnconsole = self._ld_paths.get("dnconsole")
+        if not dnconsole or not os.path.isfile(dnconsole):
+            messagebox.showerror("错误", "未找到 LDPlayer 命令行工具")
+            return
+        # 从实例名提取索引 (leidian0 → 0)
+        import re
+        match = re.search(r'(\d+)$', inst_name)
+        if not match:
+            messagebox.showerror("错误", f"无法解析实例索引: {inst_name}")
+            return
+        idx = match.group(1)
+        def _work():
+            try:
+                r = subprocess.run(
+                    [dnconsole, 'quit', '--index', idx],
+                    capture_output=True, text=True, timeout=15,
+                    creationflags=subprocess.CREATE_NO_WINDOW
+                )
+                ok = r.returncode == 0
+                msg = f"{inst_name} 已关闭" if ok else f"关闭失败: {r.stderr or r.stdout or ''}"
+            except Exception as e:
+                ok = False
+                msg = f"关闭异常: {e}"
+            self.root.after(0, lambda: messagebox.showinfo(
+                "关闭结果" if ok else "关闭失败", msg))
             self.root.after(500, self._scan_and_display_instances)
         threading.Thread(target=_work, daemon=True).start()
 
