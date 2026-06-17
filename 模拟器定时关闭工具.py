@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-模拟器定时关闭工具 v4.0
+模拟器管理工具 v4.2
 - 保留全部原有功能：定时任务、模拟器检测、一键关闭
 - 新增优化：优雅关闭（WM_CLOSE → 超时 → 强制）、自动关机、配置备份
 - 新增：雷电模拟器实例管理（自动探测路径、设置编辑、间隔启动、配置快照）
-- 粉紫主题
+- 新增：环境检测模块（Hyper-V/VMP/VBS 检测 + 一键修复）
+- 小米设计语言（Xiaomi Design）— 小米橙主题
 """
 
 import sys
@@ -34,7 +35,18 @@ from ld_instance_manager import (
     launch_instance, staggered_launch,
     load_tool_config, save_tool_config,
     get_saved_paths, save_paths,
-    TOOL_CONFIG_FILE, SNAPSHOT_DIR, find_vms_config_dir,
+    TOOL_CONFIG_FILE, SNAPSHOT_DIR,
+    # 环境检测模块
+    get_emulator_environment_report,
+    check_windows_feature,
+    apply_all_fixes,
+    apply_fix_disable_feature,
+    FEATURE_HYPERV_ALL, FEATURE_HYPERV_PLATFORM, FEATURE_VMP,
+    FEATURE_LABELS,
+    # MuMu 模块
+    auto_detect_mumu, scan_mumu_instances,
+    launch_mumu_instance, shutdown_mumu_instance,
+    find_emulator_from_shortcuts,
 )
 
 
@@ -42,6 +54,41 @@ from ld_instance_manager import (
 # Windows API 常量 & 辅助
 # ============================================================
 WM_CLOSE = 0x0010
+
+# -------------------- 日志 --------------------
+import traceback as _traceback
+
+_LOG_FILE = None
+
+def _get_log_path():
+    global _LOG_FILE
+    if _LOG_FILE:
+        return _LOG_FILE
+    try:
+        if getattr(sys, 'frozen', False):
+            _dir = os.path.dirname(os.path.abspath(sys.executable))
+        else:
+            _dir = os.path.dirname(os.path.abspath(__file__))
+        _LOG_FILE = os.path.join(_dir, "emu_tool.log")
+    except Exception:
+        _LOG_FILE = "emu_tool.log"
+    return _LOG_FILE
+
+
+def _log_error(context, exc_info=None):
+    """写入错误日志到 exe 同级目录的 emu_tool.log"""
+    try:
+        if exc_info is None:
+            exc_info = _traceback.format_exc()
+        elif isinstance(exc_info, BaseException):
+            exc_info = f"{type(exc_info).__name__}: {exc_info}"
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(_get_log_path(), 'a', encoding='utf-8') as f:
+            f.write(f"[{ts}] [{context}]\n{exc_info}\n---\n")
+    except Exception:
+        pass  # 日志本身不能再崩溃
+
+# -------------------- 关机常量 --------------------
 
 # ExitWindowsEx / InitiateShutdown 常量
 EWX_SHUTDOWN   = 0x00000001
@@ -204,20 +251,7 @@ def get_process_windows(pid):
 # ============================================================
 # 内嵌图标（base64 编码的粉紫圆形 32x32 ICO）
 # ============================================================
-_APP_ICON_B64 = (
-    "AAABAAEAICAAAAEAIACKAwAAFgAAAIlQTkcNChoKAAAADUlIRFIAAAAgAAAAIAgGAAAAc3p69AAAAARzQklUCAgICHwIZIgAAAAJcEhZcwAA"
-    "AN0AAADdAXBTogcAAAAZdEVYdFNvZnR3YXJlAHd3dy5pbmtzY2FwZS5vcmeb7jwaAAADB0lEQVRYha3XS2hdVRQG4G/ZtDZUqBERqaSJ"
-    "aB+O2g7UXBCiHTnXsWZQQS1YRxVHKShUHenMIGpHDhx0WNSJWATFtuBAtNBSGom1Riv4KA1SWA7OvuY0OfdyTrwLFneftf/973+v/byR"
-    "mbpaREzhVSyW0BSOZ+bi4FbNdlvHjiciYh6fYjNeKr4Zn0XEfERMdOEc6wLGPPbjN7yFf0r8bezBE5jAy60ZM7OVYwt+wmwtdgzHat/P"
-    "4SK2tOXtMgVP4RpOD8Fcx82CbWVdBKzg5yxDjYitGMd4KcvMj1QLc6U1a4cp6OFC7XumdLSCmVr8AnptebsswnusbjuZ+XVEfNEv13CL"
-    "BdvKugg4gwMREbg7M3/FVw24AwU7WgGZeSUilvAGHsDT2Navj4h3VAtwKTOvjFxAsWewgD/K98Fa3R7cWTCtLboexRExrkr9Ntwo4XHV"
-    "Fuxl5o1BbUcioCbkQdWJSLUmLm6Ep9NdsMZ6OF+8t2GWtvu1ts8ncQrn8FjxcyU22ZmvQ8eBF7CMVzCHq8XnSmwZLypTOzIB2KW6A05j"
-    "tpaBfcX7GZit4Xb9bwHYhKNlZIfL6PoZGKvhxmoZOFx8ubTdtCEBZWRnG0a2u9TvwJvFd5TY7oZMncW+TgJwRHX1PlvLwC1zi5N4vfjJ"
-    "NWuln6mjheMajnQR8Brex1IZxc4GzCXVW3AKlxrqd5a2S/hQ9WZsLWABf1a7dOAUHcKPxQ8NwWXhWmiqbzwJI2I7bscvmRkRsRf3luqr"
-    "mXm+4O5Sqfy9fK/DRUTiPtzMzOV1fTUJqAnJImAF/Tt/JjO3DsCvw/U5BvbRUsB/JLXYw1av4+uZeWYAbqiA1tdxRDy+JvSl1QdJTzVl"
-    "TbjhvC0zcALTJXw5M+cGjHYortEaVu1krTxsF+QGcOsuq7EygoN4HtvxSER8g7+6pHKYRcTHDdwfZOap/nvgBL7Ho7i//H43KgEDuN+j"
-    "Ojb34gfV/7o78Hft9/MSb7J6XRtcE/dDgXfxJC43NN6PbwcQT9fa1MttOabxyb+yK7vHd3uPnAAAAABJRU5ErkJggg=="
-)
+_APP_ICON_B64 = "AAABAAEAICAAAAEAIABLCAAAFgAAAIlQTkcNChoKAAAADUlIRFIAAAAgAAAAIAgCAAAA/BjtowAAAAlwSFlzAAAE0wAABMsA0oDK+QAAB/1JREFUeJx1Vutvk9cZP7f3Yr+2E8eOQ67kAqzQrCGQQRKJErGIUrYy0FpQhapqYuo2tA/Twt+Bti/bl2kTSKto1lJNZVWHBFPFRkNFxiAtoXFiOzdjTBzj2M7r43Pec6bjNzgG2ueD5dv7/J7n9/yeCywWi+VyWdM00zTBCyalrL550QAACCEAQLlcBgBwzhljQogyLQEAGkJhn89HcrlcqVRqamoqFAruM9WHq95BxRHWCISw+g3GGEn58GFy+ubn6XQaAGBZFpYilUpBr39kZMRoaQUAEK/XSylljEEIMcbwqbmhAQR1TYcArK2trS4tFYtFKWUoFNK85urqavz2RCwWA+tFhBCHaGVxgetmX1/f4OvHvF6vEEJKSTRNq6+vDwQCbuBujJV3QEFK+eUXNzPxaCqVWkslPR5PS3vHf5aXsRCUUu6UEUIORMJxpNfa1bfn+8Ovtre3AwDy+byu6yoDAIDjON9OC0Tp2fuffXjJfvwoHA4bhlH5g0OpTYDUDa21e5dlWf6mllAoFG5uDQaDrjcIYdWPAhBCvFheKAEEYHrqKztf0C3LQYgxhjGen42auo4J4Zxv6d4+eOBgVQWO4zzjoUIG2eD6O2wl85jxstdQhJYcrntMXdfVI1ICKb/417W9L+/EDY1CCLiZ+TOmhPEccq3ZJaobpiMhp8zUCRcSq4AQp8xxHF+4XvP6HLdyUnLOCSG14W8A1PLumhACQ+QwvvIk17u7fyk+J6VEvMzL1LD8HZ2dsVhsrVDwEAwIRgCur6+bplnrx5XQBkD1Q9U45xCrWJ4gfSmx1NXWJaXEDxcYY6HGSO8rfYlkEns8gwcOOgLI4pP8ysoKpe3t7ZxghBCslNpxHELIt2QAJUAAZglJJpN6c7teKPQP9Eej0dnotJLp1q26ZQ0eOEgp7e3bLYTIrK4GAoHM40fULmoeSxUDAl3XXbo2mrPaAS6CYerpEr+bWLzx0fjZs2eHX36pr6XpqsOmpqZyuVwkEtGC4WBDg6tIrSEUW14WHNhPCj2hpqqoNimqbTH1G4AAomJxbWZmZv3J2sJsDPzwVSsYPPHWycNHf7Q4H59NzGseX7AhJKEK1tQNBGBnU6OinjsYY+XgKTEqC03TaimSEHDh5LLZ+XgcYu3fNyeOvzbS2tbGGPN6vcHWjkQisW/3S44rTSkNXasL+A3DUANDCAVQUZHSLoQK4LkyCIQ55+uUFWwqhMhms3/688WxsTHLowHBgz4faG21aUk1thKHxIRgot1/MN3c3BxoahFAqiatzYBz7n5Q5a1oILqwuGT5D773y0RjZGpqanLyzief/OPk6KuYkBlfaCFXtMTKjq72ZugAhChl4+MfTkxOEkJ+8fMzQ0ODjFI3gw0A17ubWjFfmFtOnj9/vvHtd3t7e33v/SqSThevX70Sjbft6DFNcyKIib/BxPhx1n4z6AEAvP/+Xz/99DNMdM55wGdBKRljhJDNDAAAhmHMz89/8MFHqVTK0AgvFO/98Q/29u11R17v7OwMn343Ytt38jlKqbO0mMlkrMxyNpvlnT3xeHzy9l3L6xeS1wV8HR0dqkkrsT4D8PHHf7948aLjyKNHj+7e/crly5dZfGHh7h1nZjq1ZYu/q9u27eJ8wrZtJ7dWLpe7w8Tj8fxtYqJUKuneIEKIrtPjx4/X1dUxxjRNq44fNezmorN/+f3vEELI6/367n+7errrgg3Ze1OmaRqOk1lc7Kive3j/fok7CCEBpOExcxxTpkeag0tLSxhjxlhra/OJEz9RE+Xp9NzMQDkyNMUaBMl47Nq1a6dOnbJt+9atWxomR44ciUQik3fvEc2wbRsiiTWSp9LBMOBFiGhCCMdxTp9+OxDwVQPfHHYulBIPhEgIQsj01NTn4fDhw4dTqdRCYn7btm3j4+MqdskdwSSHBEuMkW3b64WiRnS7VDx06NDIyEjtXnH3bgVAAkrpxjpTLQw9iFy/+s/VtbXh4eG2lublZVVVJbsGNKQLyIXDEJSqmES3aWnr1vYzZ3723DasoajmBnFhTY2UIZicnJRSFvLrX319Xdd1SinWdJWlLEYikdVsqaWlLfko07SldWzsN/X1ATWAa26OqpGn3hGEGEI1kRzB33zrpfcezHZ3dHx5e7JkFzHGlFITaURNf6BrxGPCc2O/1s0Gj8fj91vlstr+z4zkiqmrQlb6wr1T3FdByNE3jvXsnEun0wN7+usD/rl4wj3LGGNAUMkZL9PF+cTQgR1SqtHvPvscgMuSKrLSRuUoQgip3V1mycWlvT8YuHDhQk/31l07t8/MJS5duoSJqQQujFyBlagzE40PHQBCbHD7HDObAFJKXdefelciE4JHo9/0DuwdHR395sE0qhwQhmEwxjHS8kyXebFuOw7yurPxRd6rGGqpqd3t8wGMBAQYVnacLhLxOACgq6srHA7HYrGpqSu2TYf27+vv749VbPlhcnhw/3f5dV/dcUSYw02vJxAIbFLJRSaTcTve7/f39fWdO/fbK1euNDWGPR5j38Cend/b/r9791ub22qpkFIJ120FV5OFQkEtToxxZ2fn6GuHb9y4YWpqIlpIgScSCb/f715qhqG9887pdDqdyWTSqczc3Pyegf7Cen6tkEUIlUoldyG6GimXy4Qot4yxcDisOKmvrz928tToj9+AEHLO3QXHGHOXlBuUruudFbNte//QgGVZatVUKlfbWa4mlVOycdL9H0sso7Cw/bKtAAAAAElFTkSuQmCC"
 
 
 def _get_icon_path():
@@ -234,32 +268,30 @@ def _get_icon_path():
 
 
 # ============================================================
-# 配色方案 — 粉紫主题
+# 配色方案 — 小米设计语言（Xiaomi Design）
 # ============================================================
-PRIMARY     = "#ff6b9d"   # 主色：热粉色
-ACCENT      = "#b088f9"   # 强调色：淡紫色
-BG          = "#F5F0F8"   # 极浅紫底
+PRIMARY     = "#FF6700"   # 小米橙（品牌色）
+ACCENT      = "#FF8A00"   # 浅橙色（强调/悬停）
+BG          = "#F5F5F5"   # 极浅灰底（小米生态链通用底）
 CARD        = "#FFFFFF"   # 纯白卡片
-TEXT        = "#2D2538"   # 深紫黑文字
-TEXT_SUB    = "#9B8EAA"   # 次要紫色文字
-TEXT_LIGHT  = "#CBBFD6"   # 浅紫占位
-BORDER      = "#E6DEF0"   # 浅紫边框
-GREEN       = "#00B42A"
-RED         = "#FF4757"
-YELLOW      = "#FFA502"   # 暖琥珀色
-ORANGE      = "#ff6b9d"   # 兼容旧变量
-BG_LIGHT    = "#EDE6F4"   # 浅紫背景
+TEXT        = "#1A1A1A"   # 深黑（高可读性）
+TEXT_SUB    = "#666666"   # 中灰（次要信息）
+TEXT_LIGHT  = "#999999"   # 浅灰（占位/装饰）
+BORDER      = "#E0E0E0"   # 浅灰边框
+GREEN       = "#00B42A"   # 翠绿（保留）
+RED         = "#FF4757"   # 警告红（保留）
+YELLOW      = "#FFA502"   # 暖琥珀（保留）
+BG_LIGHT    = "#FFF3E6"   # 极浅橙底（卡片高亮用）
 
-# 粉紫扩展色
-PINK_LIGHT  = "#FF8DB8"
-PINK_DARK   = "#E55D83"
-PURPLE_LIGHT = "#C9A8FF"
-PURPLE_DARK  = "#9068D8"
+# 小米橙扩展色
+ORANGE_LIGHT  = "#FFB366"
+ORANGE_DARK   = "#E55D00"
+ORANGE_BG     = "#FFF8F0"  # 极浅橙背景
 
 # 兼容旧变量名
 MI_ORANGE     = PRIMARY
-MI_ORANGE_LT  = PINK_LIGHT
-MI_ORANGE_DK  = PINK_DARK
+MI_ORANGE_LT  = ORANGE_LIGHT
+MI_ORANGE_DK  = ORANGE_DARK
 MI_BG         = BG
 MI_CARD       = CARD
 MI_TEXT       = TEXT
@@ -447,6 +479,17 @@ SHUTDOWN_CANCEL_WAIT = 5    # 关机前取消倒计时秒数
 BACKUP_KEEP_COUNT = 20      # 备份保留最大份数
 
 
+def _find_ldconsole(ld_path):
+    """查找 LDPlayer 的命令行工具（新版叫 ldconsole.exe，旧版叫 dnconsole.exe）"""
+    if not ld_path:
+        return None
+    for name in ['ldconsole.exe', 'dnconsole.exe']:
+        fp = os.path.join(ld_path, name)
+        if os.path.isfile(fp):
+            return fp
+    return None
+
+
 def find_ldplayer_install_path(procs):
     """尝试找到雷电模拟器安装路径（用于 dnconsole quitall）"""
     candidates = [
@@ -473,7 +516,7 @@ def find_ldplayer_install_path(procs):
             except Exception:
                 pass
     for path in candidates:
-        if os.path.exists(os.path.join(path, 'dnconsole.exe')):
+        if _find_ldconsole(path):
             return path
     return None
 
@@ -493,6 +536,27 @@ def find_vms_config_dir():
             d = os.path.join(roaming, item, 'vms')
             if os.path.exists(d):
                 return d
+    return None
+
+
+def _find_mumu_manager():
+    """查找 MuMuManager.exe 路径（含自动检测的路径）"""
+    candidates = [
+        r'C:\Program Files\Netease\MuMuPlayer-12.0\shell\MuMuManager.exe',
+        r'C:\Program Files\Netease\MuMuPlayer-12.0\MuMuManager.exe',
+        r'C:\Program Files\MuMuPlayer-12.0\shell\MuMuManager.exe',
+        r'C:\Program Files (x86)\Netease\MuMuPlayer-12.0\shell\MuMuManager.exe',
+    ]
+    for p in candidates:
+        if os.path.isfile(p):
+            return p
+    try:
+        from ld_instance_manager import auto_detect_mumu
+        info = auto_detect_mumu()
+        if info.get("manager_path"):
+            return info["manager_path"]
+    except Exception:
+        pass
     return None
 
 
@@ -602,7 +666,7 @@ def graceful_kill_async(on_done, on_status=None, on_progress=None,
             ld_path = find_ldplayer_install_path(procs)
             dnconsole_path = None
             if ld_path:
-                dnconsole_path = os.path.join(ld_path, 'dnconsole.exe')
+                dnconsole_path = _find_ldconsole(ld_path)
                 if os.path.exists(dnconsole_path):
                     _status("通过 dnconsole quitall 优雅关闭 LDPlayer 实例...")
                     _progress(10)
@@ -616,19 +680,10 @@ def graceful_kill_async(on_done, on_status=None, on_progress=None,
             # ---- 阶段1b：MuMuManager（MuMu 优雅关闭）----
             has_mumu = any(p.get('type') == 'mumu' for p in procs)
             if has_mumu:
-                # 搜索 MuMuManager.exe
-                mumu_mgr = None
-                for candidate in [
-                    r'C:\Program Files\Netease\MuMuPlayer-12.0\shell\MuMuManager.exe',
-                    r'C:\Program Files\Netease\MuMuPlayer-12.0\MuMuManager.exe',
-                    r'C:\Program Files\MuMuPlayer-12.0\shell\MuMuManager.exe',
-                    r'C:\Program Files (x86)\Netease\MuMuPlayer-12.0\shell\MuMuManager.exe',
-                ]:
-                    if os.path.isfile(candidate):
-                        mumu_mgr = candidate
-                        break
-                # 也搜索进程路径
+                # 搜索 MuMuManager.exe（含自动检测的路径）
+                mumu_mgr = _find_mumu_manager()
                 if not mumu_mgr:
+                    # 从进程路径搜索
                     for proc in procs:
                         if proc.get('type') == 'mumu':
                             try:
@@ -649,6 +704,7 @@ def graceful_kill_async(on_done, on_status=None, on_progress=None,
                     try:
                         subprocess.run([mumu_mgr, 'shutdown', '-n', 'all'],
                                        capture_output=True, text=True, timeout=15,
+                                       cwd=os.path.dirname(mumu_mgr),
                                        creationflags=subprocess.CREATE_NO_WINDOW)
                     except Exception:
                         pass
@@ -949,8 +1005,22 @@ def save_tasks_config(tasks_data):
 
 
 # ============================================================
-# GUI — RoundedButton（保留原样，颜色引用已更新为粉紫）
+# GUI — RoundedButton（自绘按钮，带悬停效果）
 # ============================================================
+
+def _lighten_color(hex_color, factor=0.15):
+    """将十六进制颜色调亮 factor（0-1），找不到映射时的兜底"""
+    try:
+        r = int(hex_color[1:3], 16)
+        g = int(hex_color[3:5], 16)
+        b = int(hex_color[5:7], 16)
+        r = min(255, int(r + (255 - r) * factor))
+        g = min(255, int(g + (255 - g) * factor))
+        b = min(255, int(b + (255 - b) * factor))
+        return f"#{r:02x}{g:02x}{b:02x}"
+    except Exception:
+        return hex_color
+
 
 class RoundedButton(tk.Frame):
     """自绘按钮（Frame + Label，带字体缓存和悬停效果）"""
@@ -1006,15 +1076,18 @@ class RoundedButton(tk.Frame):
     @staticmethod
     def _default_hover(bg_color):
         """根据按钮背景色自动推断合适的悬停颜色"""
+        # 找不到映射就加深 15% 而不是变白
         light_map = {
-            "#ff6b9d": "#FF8DB8",
-            "#b088f9": "#C9A8FF",
-            "#00B42A": "#30C94E",
-            "#FF4757": "#FF6B78",
-            "#FFA502": "#FFB933",
-            "#CBBFD6": "#D8CCE2",
+            "#FF6700": "#FF8533",  # 小米橙
+            "#FF8A00": "#FFA233",  # 浅橙
+            "#00B42A": "#30C94E",  # 绿
+            "#FF4757": "#FF6B78",  # 红
+            "#FFA502": "#FFB933",  # 黄
+            "#999999": "#B0B0B0",  # 灰
+            "#666666": "#808080",  # 深灰
+            "#E55D00": "#FF6700",  # 深橙
         }
-        return light_map.get(bg_color, "#FFFFFF")
+        return light_map.get(bg_color, _lighten_color(bg_color))
 
     def _on_click(self, event):
         if self._cmd:
@@ -1078,11 +1151,15 @@ class EmulatorShutdownApp:
 
         # 关机相关状态
         self._shutdown_running = False
+        self._kill_status_var = tk.StringVar(value="")
 
         # 实例管理
         self._ld_paths = {}
         self._instances = []
         self._inst_vars = []
+        # MuMu 实例管理
+        self._mumu_path = None
+        self._mumu_instances = []
 
         self.auto_start_var = tk.BooleanVar(value=is_auto_start_enabled())
         self.auto_launch_var = tk.BooleanVar(value=False)
@@ -1110,17 +1187,22 @@ class EmulatorShutdownApp:
         self.f_body   = Font(family="Microsoft YaHei", size=9)
         self.f_small  = Font(family="Microsoft YaHei", size=8)
 
-        # ===== 顶栏 — 粉紫风：纯白 + 粉紫底线 =====
+        # ===== 顶栏 — 小米设计风格 =====
         header = tk.Frame(root, bg=CARD, height=48)
         header.pack(fill="x")
         header.pack_propagate(False)
         h_row = tk.Frame(header, bg=CARD)
         h_row.pack(expand=True, fill="x", padx=20)
-        tk.Label(h_row, text="模拟器管理", font=self.f_title,
+        tk.Label(h_row, text="⚡ 模拟器管理", font=self.f_title,
                  bg=CARD, fg=TEXT).pack(side="left")
-        tk.Label(h_row, text="v4.1", font=self.f_small,
-                 bg=CARD, fg=TEXT_SUB, padx=6).pack(side="left")
-        # 粉色强调底线，替代原来的灰色
+        tk.Label(h_row, text="v4.2", font=self.f_small,
+                 bg=CARD, fg=TEXT_LIGHT, padx=6).pack(side="left")
+        # 版本状态点
+        status_dot = tk.Frame(h_row, bg=GREEN, width=6, height=6,
+                              highlightthickness=0, bd=0)
+        status_dot.pack(side="left", padx=(4, 0))
+        status_dot.pack_propagate(False)
+        # 小米橙强调底线
         tk.Frame(header, bg=PRIMARY, height=2).pack(side="bottom", fill="x")
 
         # ===== 主内容区（可滚动） =====
@@ -1161,11 +1243,174 @@ class EmulatorShutdownApp:
             tk.Frame(parent, bg=BORDER, height=1).pack(fill="x", pady=(0, 4))
 
         # ============================================================
-        # 卡片1：定时关闭实例 + 开机自启
+        # 卡片1：环境检测 — 最优先，诊断入口
         # ============================================================
-        card1, c1 = make_card(main_frame)
+        env_card, env_inner = make_card(main_frame, accent_color=PRIMARY)
 
-        section_title(c1, "■  定时关闭实例", RED)
+        env_header = tk.Frame(env_inner, bg=CARD)
+        env_header.pack(fill="x")
+        tk.Label(env_header, text="🔍 环境检测", font=self.f_sec,
+                 bg=CARD, fg=PRIMARY).pack(side="left")
+        self.env_score_var = tk.StringVar(value="")
+        self.env_score_lbl = tk.Label(env_header, textvariable=self.env_score_var,
+                                      font=self.f_body,
+                                      bg=CARD, fg=TEXT_LIGHT)
+        self.env_score_lbl.pack(side="right")
+
+        # 环境状态表格
+        self.env_frame = tk.Frame(env_inner, bg=CARD)
+        self.env_frame.pack(fill="x")
+        self._rebuild_env_ui([])
+
+        # 操作行
+        env_btn_row = tk.Frame(env_inner, bg=CARD)
+        env_btn_row.pack(fill="x", pady=(6, 0))
+        self.env_scan_btn = RoundedButton(env_btn_row, text="🔄 一键检测",
+                                          command=self._on_env_scan,
+                                          bg=PRIMARY, fg="white",
+                                          font=self.f_body, padx=12)
+        self.env_scan_btn.pack(side="left", padx=(0, 6))
+        self.env_fix_btn = RoundedButton(env_btn_row, text="🔧 一键修复",
+                                         command=self._on_env_fix,
+                                         bg=RED, fg="white",
+                                         font=self.f_body, padx=12)
+        self.env_fix_btn.pack(side="left", padx=(0, 6))
+        self.env_fix_btn.pack_forget()
+        self.env_status_var = tk.StringVar(value="点「一键检测」开始检查")
+        tk.Label(env_btn_row, textvariable=self.env_status_var,
+                 font=self.f_small, bg=CARD, fg=TEXT_LIGHT).pack(side="left", padx=(8, 0))
+
+        # 详情区
+        tk.Frame(env_inner, bg=BORDER, height=1).pack(fill="x", pady=(6, 0))
+        self.env_detail_text = tk.Text(env_inner, font=("Consolas", 8),
+                                       bg=ORANGE_BG, fg=TEXT, height=3,
+                                       wrap="word", relief="flat", bd=0,
+                                       highlightthickness=0)
+        self.env_detail_text.pack(fill="x", pady=(4, 0))
+        self.env_detail_text.insert("1.0", "检测结果详情将在此显示...")
+        self.env_detail_text.config(state="disabled")
+
+        # ============================================================
+        # 卡片2：实例管理
+        # ============================================================
+        card2, c2 = make_card(main_frame, accent_color=ACCENT)
+
+        tk.Label(c2, text="📱 实例管理", font=self.f_sec,
+                 bg=CARD, fg=TEXT).pack(anchor="w", pady=(0, 2))
+
+        # ---- LDPlayer 路径选择行 ----
+        ld_row = tk.Frame(c2, bg=CARD)
+        ld_row.pack(fill="x", pady=(2, 0))
+        tk.Label(ld_row, text="雷电", font=self.f_small, bg=CARD, fg=TEXT_SUB,
+                 width=4, anchor="w").pack(side="left")
+        self.ld_path_var = tk.StringVar(value="")
+        self.ld_path_entry = tk.Entry(ld_row, textvariable=self.ld_path_var,
+                                      font=("Consolas", 8), bg=BG, fg=TEXT_LIGHT,
+                                      relief="flat", bd=2, highlightthickness=0)
+        self.ld_path_entry.pack(side="left", fill="x", expand=True, ipady=2)
+        self.ld_path_entry.insert(0, "直接输入路径回车，或点 📁 浏览")
+        self._ld_placeholder = True
+        def _on_ld_focusin(_):
+            if self._ld_placeholder:
+                self.ld_path_var.set("")
+                self.ld_path_entry.config(fg=TEXT)
+                self._ld_placeholder = False
+        def _on_ld_focusout(_):
+            self._on_ld_path_enter()
+            # 如果还是空的，恢复占位
+            if not self.ld_path_var.get().strip():
+                self.ld_path_var.set("")
+                self.ld_path_entry.insert(0, "直接输入路径回车，或点 📁 浏览")
+                self.ld_path_entry.config(fg=TEXT_LIGHT)
+                self._ld_placeholder = True
+        self.ld_path_entry.bind("<FocusIn>", _on_ld_focusin)
+        self.ld_path_entry.bind("<Return>", lambda e: self._on_ld_path_enter())
+        self.ld_path_entry.bind("<FocusOut>", _on_ld_focusout)
+        RoundedButton(ld_row, text="📁", command=self._manual_select_ld_path,
+                      bg=PRIMARY, fg="white", font=("Consolas", 8), padx=6, pady=0).pack(side="right", padx=(4, 0))
+
+        # ---- MuMu 路径选择行 ----
+        mm_row = tk.Frame(c2, bg=CARD)
+        mm_row.pack(fill="x", pady=(2, 4))
+        tk.Label(mm_row, text="MuMu", font=self.f_small, bg=CARD, fg=ORANGE_DARK,
+                 width=4, anchor="w").pack(side="left")
+        self.mumu_path_var = tk.StringVar(value="")
+        self.mumu_path_entry = tk.Entry(mm_row, textvariable=self.mumu_path_var,
+                                        font=("Consolas", 8), bg=BG, fg=TEXT_LIGHT,
+                                        relief="flat", bd=2, highlightthickness=0)
+        self.mumu_path_entry.pack(side="left", fill="x", expand=True, ipady=2)
+        self.mumu_path_entry.insert(0, "直接输入路径回车，或点 📁 浏览")
+        self._mumu_placeholder = True
+        def _on_mumu_focusin(_):
+            if self._mumu_placeholder:
+                self.mumu_path_var.set("")
+                self.mumu_path_entry.config(fg=TEXT)
+                self._mumu_placeholder = False
+        def _on_mumu_focusout(_):
+            self._on_mumu_path_enter()
+            if not self.mumu_path_var.get().strip():
+                self.mumu_path_var.set("")
+                self.mumu_path_entry.insert(0, "直接输入路径回车，或点 📁 浏览")
+                self.mumu_path_entry.config(fg=TEXT_LIGHT)
+                self._mumu_placeholder = True
+        self.mumu_path_entry.bind("<FocusIn>", _on_mumu_focusin)
+        self.mumu_path_entry.bind("<Return>", lambda e: self._on_mumu_path_enter())
+        self.mumu_path_entry.bind("<FocusOut>", _on_mumu_focusout)
+        RoundedButton(mm_row, text="📁", command=self._manual_select_mumu_path,
+                      bg=ORANGE_DARK, fg="white", font=("Consolas", 8), padx=6, pady=0).pack(side="right", padx=(4, 0))
+
+        # 实例列表表头
+        ih = tk.Frame(c2, bg=CARD)
+        ih.pack(fill="x")
+        for txt, w in [("", 3), ("实例", 8), ("设置", 22), ("状态", 8)]:
+            tk.Label(ih, text=txt, font=("Microsoft YaHei", 8, "bold"),
+                     bg=CARD, fg=TEXT_SUB, width=w, anchor="w").pack(side="left")
+        tk.Frame(c2, bg=BORDER, height=1).pack(fill="x", pady=(2, 0))
+
+        self.inst_rows_frame = tk.Frame(c2, bg=CARD)
+        self.inst_rows_frame.pack(fill="x")
+
+        # 操作按钮行 1：管理操作
+        ib = tk.Frame(c2, bg=CARD)
+        ib.pack(fill="x", pady=(6, 0))
+        RoundedButton(ib, text="⟳ 扫描", command=self._refresh_instances,
+                      bg=PRIMARY, fg="white", font=self.f_small, padx=8).pack(side="left", padx=(0, 4))
+        RoundedButton(ib, text="✎ 编辑", command=self._edit_instance_settings,
+                      bg=TEXT_SUB, fg="white", font=self.f_small, padx=8).pack(side="left", padx=(0, 4))
+        RoundedButton(ib, text="💾 快照", command=self._save_snapshot,
+                      bg=GREEN, fg="white", font=self.f_small, padx=8).pack(side="left", padx=(0, 4))
+        RoundedButton(ib, text="⏎ 恢复", command=self._restore_snapshot,
+                      bg=YELLOW, fg="white", font=self.f_small, padx=8).pack(side="left", padx=(0, 8))
+
+        # 间隔启动控件
+        tk.Label(ib, text="间隔", font=self.f_small, bg=CARD, fg=TEXT_SUB).pack(side="left")
+        self.launch_interval_var = tk.StringVar(value="5")
+        ttk.Spinbox(ib, from_=1, to=60, width=2,
+                     textvariable=self.launch_interval_var,
+                     font=("Consolas", 8)).pack(side="left", padx=(2, 1))
+        tk.Label(ib, text="秒", font=self.f_small, bg=CARD, fg=TEXT_SUB).pack(side="left")
+        self.launch_btn = RoundedButton(ib, text="▶ 启动", command=self._on_staggered_launch,
+                                        bg=GREEN, fg="white", font=self.f_small, padx=8)
+        self.launch_btn.pack(side="right")
+        self.launch_status_var = tk.StringVar(value="")
+        tk.Label(ib, textvariable=self.launch_status_var,
+                 font=self.f_small, bg=CARD, fg=TEXT_SUB).pack(side="right", padx=(0, 6))
+
+        # 操作按钮行 2：备份管理
+        bb = tk.Frame(c2, bg=CARD)
+        bb.pack(fill="x", pady=(4, 0))
+        tk.Label(bb, text="备份", font=self.f_small, bg=CARD, fg=TEXT_SUB).pack(side="left", padx=(0, 6))
+        RoundedButton(bb, text="📋 备份列表", command=self._show_backup_list,
+                      bg=ACCENT, fg="white", font=("Microsoft YaHei", 7), padx=6, pady=2).pack(side="left", padx=(0, 4))
+        RoundedButton(bb, text="📸 快照列表", command=self._show_snapshot_list,
+                      bg=ORANGE_LIGHT, fg="white", font=("Microsoft YaHei", 7), padx=6, pady=2).pack(side="left")
+
+        # ============================================================
+        # 卡片3：定时任务
+        # ============================================================
+        card1, c1 = make_card(main_frame, accent_color=RED)
+
+        section_title(c1, "⏰ 定时关闭", RED)
 
         shutdown_scroll_f = tk.Frame(c1, bg=CARD)
         shutdown_scroll_f.pack(fill="both", expand=True)
@@ -1181,27 +1426,25 @@ class EmulatorShutdownApp:
         self._shutdown_canvas = shutdown_canvas
 
         rbtn = tk.Frame(c1, bg=CARD)
-        rbtn.pack(fill="x", pady=(6, 0))
-        RoundedButton(rbtn, text="+", command=lambda: self._add_task("shutdown"),
-                      bg=RED, fg="white", font=("Consolas", 10, "bold"),
-                      padx=8, pady=1).pack(side="left", padx=(0, 4))
-        RoundedButton(rbtn, text="全部启动", command=lambda: self._start_all("shutdown"),
-                      bg=ORANGE, fg="white", font=self.f_body, padx=8).pack(side="left", padx=(0, 4))
-        RoundedButton(rbtn, text="停止", command=lambda: self._stop_all("shutdown"),
-                      bg=RED, fg="white", font=self.f_body, padx=8).pack(side="left")
+        rbtn.pack(fill="x", pady=(4, 0))
+        RoundedButton(rbtn, text="+ 新建", command=lambda: self._add_task("shutdown"),
+                      bg=RED, fg="white", font=self.f_body, padx=8, pady=1).pack(side="left", padx=(0, 4))
+        RoundedButton(rbtn, text="▶ 全部启动", command=lambda: self._start_all("shutdown"),
+                      bg=PRIMARY, fg="white", font=self.f_small, padx=8).pack(side="left", padx=(0, 4))
+        RoundedButton(rbtn, text="■ 停止", command=lambda: self._stop_all("shutdown"),
+                      bg=TEXT_SUB, fg="white", font=self.f_small, padx=8).pack(side="left")
 
-        # 开机自启实例
+        # 开机自启选项
         auto_f = tk.Frame(c1, bg=CARD)
-        auto_f.pack(fill="x", pady=(6, 0))
-        tk.Checkbutton(auto_f, text="开机自启勾选的实例（启动时自动恢复配置并启动）",
-                       variable=self.auto_launch_var,
-                       font=self.f_body, bg=CARD, fg=TEXT_SUB,
+        auto_f.pack(fill="x", pady=(4, 0))
+        tk.Checkbutton(auto_f, text="开机自启勾选的实例", variable=self.auto_launch_var,
+                       font=self.f_small, bg=CARD, fg=TEXT_SUB,
                        selectcolor=CARD, activebackground=CARD,
                        command=self._save_tasks_config).pack(side="left")
 
-        # ===== 定时启动实例 =====
-        tk.Frame(c1, bg=BORDER, height=1).pack(fill="x", pady=(6, 4))
-        section_title(c1, "■  定时启动实例", GREEN)
+        # 分割 + 定时启动
+        tk.Frame(c1, bg=BORDER, height=1).pack(fill="x", pady=(4, 4))
+        section_title(c1, "▶ 定时启动", GREEN)
 
         launch_scroll_f = tk.Frame(c1, bg=CARD)
         launch_scroll_f.pack(fill="both", expand=True)
@@ -1217,120 +1460,59 @@ class EmulatorShutdownApp:
         self._launch_canvas = launch_canvas
 
         lbtn = tk.Frame(c1, bg=CARD)
-        lbtn.pack(fill="x", pady=(6, 0))
-        RoundedButton(lbtn, text="+", command=self._add_launch_task,
-                      bg=GREEN, fg="white", font=("Consolas", 10, "bold"),
-                      padx=8, pady=1).pack(side="left", padx=(0, 4))
-        RoundedButton(lbtn, text="全部启动", command=lambda: self._start_all_launch(),
-                      bg=GREEN, fg="white", font=self.f_body, padx=8).pack(side="left", padx=(0, 4))
-        RoundedButton(lbtn, text="停止", command=lambda: self._stop_all_launch(),
-                      bg=TEXT_SUB, fg="white", font=self.f_body, padx=8).pack(side="left")
+        lbtn.pack(fill="x", pady=(4, 0))
+        RoundedButton(lbtn, text="+ 新建", command=self._add_launch_task,
+                      bg=GREEN, fg="white", font=self.f_body, padx=8, pady=1).pack(side="left", padx=(0, 4))
+        RoundedButton(lbtn, text="▶ 全部启动", command=lambda: self._start_all_launch(),
+                      bg=GREEN, fg="white", font=self.f_small, padx=8).pack(side="left", padx=(0, 4))
+        RoundedButton(lbtn, text="■ 停止", command=lambda: self._stop_all_launch(),
+                      bg=TEXT_SUB, fg="white", font=self.f_small, padx=8).pack(side="left")
 
         # ============================================================
-        # 卡片2：实例管理
+        # 卡片4：快速操作
         # ============================================================
-        card2, c2 = make_card(main_frame)
+        card3, c3 = make_card(main_frame, accent_color=RED)
 
-        tk.Label(c2, text="雷电模拟器实例", font=self.f_sec,
-                 bg=CARD, fg=PRIMARY).pack(anchor="w", pady=(0, 4))
+        tk.Label(c3, text="⚡ 快速操作", font=self.f_sec,
+                 bg=CARD, fg=TEXT).pack(anchor="w", pady=(0, 6))
 
-        self.ld_path_var = tk.StringVar(value="检测中...")
-        tk.Label(c2, textvariable=self.ld_path_var,
-                 font=self.f_small, bg=CARD, fg=TEXT_SUB,
-                 anchor="w").pack(fill="x", pady=(0, 4))
-
-        # 实例表头
-        ih = tk.Frame(c2, bg=CARD)
-        ih.pack(fill="x")
-        for txt, w in [("", 3), ("实例", 10), ("设置", 26), ("状态", 8)]:
-            tk.Label(ih, text=txt, font=("Microsoft YaHei", 8, "bold"),
-                     bg=CARD, fg=TEXT_SUB, width=w, anchor="w").pack(side="left")
-        tk.Frame(c2, bg=BORDER, height=1).pack(fill="x", pady=(2, 0))
-
-        self.inst_rows_frame = tk.Frame(c2, bg=CARD)
-        self.inst_rows_frame.pack(fill="x")
-
-        # 按钮行
-        ib = tk.Frame(c2, bg=CARD)
-        ib.pack(fill="x", pady=(6, 0))
-        RoundedButton(ib, text="⟳ 扫描", command=self._refresh_instances,
-                      bg=PRIMARY, fg="white", font=self.f_body, padx=8).pack(side="left", padx=(0, 4))
-        RoundedButton(ib, text="编辑", command=self._edit_instance_settings,
-                      bg=TEXT_SUB, fg="white", font=self.f_body, padx=8).pack(side="left", padx=(0, 4))
-        RoundedButton(ib, text="保存快照", command=self._save_snapshot,
-                      bg=GREEN, fg="white", font=self.f_body, padx=8).pack(side="left", padx=(0, 4))
-        RoundedButton(ib, text="恢复快照", command=self._restore_snapshot,
-                      bg=YELLOW, fg="white", font=self.f_body, padx=8).pack(side="left", padx=(0, 8))
-        # 间隔
-        tk.Label(ib, text="间隔", font=self.f_body, bg=CARD, fg=TEXT_SUB).pack(side="left")
-        self.launch_interval_var = tk.StringVar(value="5")
-        ttk.Spinbox(ib, from_=1, to=60, width=2,
-                     textvariable=self.launch_interval_var,
-                     font=("Consolas", 9)).pack(side="left", padx=(3, 1))
-        tk.Label(ib, text="秒", font=self.f_body, bg=CARD, fg=TEXT_SUB).pack(side="left")
-        self.launch_btn = RoundedButton(ib, text="启动", command=self._on_staggered_launch,
-                                        bg=GREEN, fg="white", font=self.f_body, padx=8)
-        self.launch_btn.pack(side="right")
-        self.launch_status_var = tk.StringVar(value="")
-        tk.Label(ib, textvariable=self.launch_status_var,
-                 font=self.f_small, bg=CARD, fg=TEXT_SUB).pack(side="right", padx=(0, 6))
-
-        # 第二行：备份管理按钮
-        bb = tk.Frame(c2, bg=CARD)
-        bb.pack(fill="x", pady=(4, 0))
-        tk.Label(bb, text="备份管理", font=("Microsoft YaHei", 8, "bold"),
-                 bg=CARD, fg=TEXT_SUB).pack(side="left", padx=(0, 8))
-        RoundedButton(bb, text="📋 备份列表", command=self._show_backup_list,
-                      bg=PURPLE_LIGHT, fg="white", font=self.f_small, padx=8, pady=2).pack(side="left", padx=(0, 4))
-        RoundedButton(bb, text="📸 快照列表", command=self._show_snapshot_list,
-                      bg=PINK_LIGHT, fg="white", font=self.f_small, padx=8, pady=2).pack(side="left")
-
-        # ============================================================
-        # 卡片3：关机设置 & 操作按钮
-        # ============================================================
-        card3, c3 = make_card(main_frame)
-
-        tk.Label(c3, text="操作", font=self.f_sec,
-                 bg=CARD, fg=TEXT).pack(anchor="w", pady=(0, 4))
-
-        # 操作按钮行
+        # 操作按钮
         op_row = tk.Frame(c3, bg=CARD)
         op_row.pack(fill="x", pady=(0, 6))
-        RoundedButton(op_row, text="关闭所有模拟器", command=self._on_kill_now,
-                      bg=RED, fg="white", font=self.f_body, padx=10).pack(side="left", padx=(0, 10))
+        RoundedButton(op_row, text="⏹ 关闭所有模拟器", command=self._on_kill_now,
+                      bg=RED, fg="white", font=self.f_body, padx=12).pack(side="left", padx=(0, 12))
 
-        # 关机设置（嵌入操作区）
-        tk.Label(c3, text="关闭后操作", font=("Microsoft YaHei", 8, "bold"),
-                 bg=CARD, fg=TEXT_SUB).pack(anchor="w")
+        # 关机设置
+        tk.Frame(c3, bg=BORDER, height=1).pack(fill="x", pady=(0, 6))
         sf = tk.Frame(c3, bg=CARD)
         sf.pack(fill="x")
         self.shutdown_var = tk.BooleanVar(value=True)
-        tk.Checkbutton(sf, text="关机", variable=self.shutdown_var,
+        tk.Checkbutton(sf, text="🔌 关闭后关机", variable=self.shutdown_var,
                        font=self.f_body, bg=CARD, fg=RED,
-                       selectcolor=CARD, activebackground=CARD).pack(side="left", padx=(0, 16))
+                       selectcolor=CARD, activebackground=CARD).pack(side="left", padx=(0, 12))
         self.restart_var = tk.BooleanVar(value=False)
-        tk.Checkbutton(sf, text="重启（替代关机）", variable=self.restart_var,
-                       font=self.f_body, bg=CARD, fg=RED,
+        tk.Checkbutton(sf, text="🔄 替代为重启", variable=self.restart_var,
+                       font=self.f_small, bg=CARD, fg=TEXT_SUB,
                        selectcolor=CARD, activebackground=CARD).pack(side="left")
         tk.Label(sf, text="（关闭模拟器后自动执行）", font=("Microsoft YaHei", 7),
                  bg=CARD, fg=TEXT_LIGHT).pack(side="left", padx=(8, 0))
 
         # ============================================================
-        # 底部
+        # 底部栏
         # ============================================================
         bt = tk.Frame(main_frame, bg=BG)
         bt.pack(fill="x", pady=(4, 0))
-        tk.Checkbutton(bt, text="开机自启工具", variable=self.auto_start_var,
-                       font=self.f_body, bg=BG, fg=TEXT_SUB,
+        tk.Checkbutton(bt, text="🖥 开机自启", variable=self.auto_start_var,
+                       font=self.f_small, bg=BG, fg=TEXT_SUB,
                        selectcolor=CARD, activebackground=BG,
                        command=self._on_auto_start_toggle).pack(side="left")
-        RoundedButton(bt, text="最小化", command=self._minimize_to_tray,
-                      bg=TEXT_LIGHT, fg="white", font=self.f_small, padx=8).pack(side="right")
+        RoundedButton(bt, text="🗕 最小化", command=self._minimize_to_tray,
+                      bg=TEXT_LIGHT, fg="white", font=self.f_small, padx=10).pack(side="right")
 
-        # 底栏
-        ft = tk.Frame(root, bg=BG, height=20)
+        # 底栏 — 极简
+        ft = tk.Frame(root, bg=BG, height=16)
         ft.pack(fill="x")
-        tk.Label(ft, text="实例管理 · 定时启停 · 强制关机 · 配置快照",
+        tk.Label(ft, text="Xiaomi Design · v4.2 · 环境检测 · 实例管理 · 定时任务 · 强制关机",
                  font=("Microsoft YaHei", 7), bg=BG, fg=TEXT_LIGHT).pack(expand=True)
 
     # ---------- 任务组件（完全保留原有逻辑） ----------
@@ -2105,29 +2287,29 @@ class EmulatorShutdownApp:
         if should_shutdown and self.restart_var.get():
             action_text = "并重启"
 
-        t_labels = {'ld': '雷电', 'mumu': 'MuMu'}
-        details = "\n".join([
-            f"  [{t_labels.get(p['type'], '?')}] PID:{p['pid']}  {p['name']}"
-            for p in self._emu_procs_cache
-        ])
-        if not messagebox.askyesno("确认操作",
-                                    f"即将关闭以下 {len(self._emu_procs_cache)} 个模拟器{action_text}：\n\n{details}\n\n确定继续？",
-                                    icon="warning"):
+        # 直接执行，不再弹确认框
+        graceful_kill_async(
+            on_done=lambda count, success, fail_count, failed_names, backup_msg, shutdown_executed: self.root.after(0, lambda: self._on_kill_done(
+                count, success, fail_count, failed_names, backup_msg, shutdown_executed)),
+            do_backup=True,
+            do_shutdown=should_shutdown,
+            should_restart=self.restart_var.get(),
+        )
+
+    def _on_kill_done(self, count, success, fail_count, failed_names, backup_msg, shutdown_executed):
+        """关闭模拟器完成后的回调"""
+        if count == 0:
             return
+        msg = f"已关闭 {success}/{count} 个模拟器"
+        if fail_count > 0:
+            msg += f"\n{fail_count} 个失败: {', '.join(failed_names[:5])}"
+        if backup_msg:
+            msg += f"\n{backup_msg}"
+        self._kill_status_var.set(msg)
 
-        def _on_done(count, success, fail_count, failed_names, backup_msg, shutdown_exec):
-            if count == 0:
-                msg = "未检测到模拟器进程"
-            else:
-                msg = f"已关闭 {success}/{count} 个模拟器"
-            if failed_names:
-                msg += "\n\n无法关闭：\n" + "\n".join(f"  {f}" for f in failed_names)
-            if should_shutdown and success > 0:
-                msg += f"\n\n即将{'重启' if self.restart_var.get() else '关机'}..."
-            messagebox.showinfo("操作完成", msg)
-
-        graceful_kill_async(on_done=_on_done, do_backup=True, do_shutdown=should_shutdown,
-                           should_restart=self.restart_var.get())
+    def _add_progress_window(self):
+        """添加进度窗口 - 在 _build_ui 中调用"""
+        pass
 
     def _on_auto_start_toggle(self):
         enable = self.auto_start_var.get()
@@ -2222,125 +2404,425 @@ class EmulatorShutdownApp:
     # ---------- 实例管理 ----------
 
     def _init_instance_manager(self):
-        """初始化实例管理器：探测路径、扫描实例"""
+        """初始化实例管理器：先搜快捷方式，再加载保存的路径"""
         self._load_auto_launch_instances()
-        saved = get_saved_paths()
+        saved = load_tool_config()
+        ld_paths = saved.get("paths", {})
+        mumu_path = saved.get("mumu_manager_path", "")
 
-        # 尝试使用保存的路径
-        if saved.get("ld_path") and os.path.isfile(saved.get("dnconsole", "")):
-            self._ld_paths = saved
-            self.ld_path_var.set(f"LDPlayer: {saved['ld_path']}")
-            self._scan_and_display_instances()
-            return
+        # === 配置迁移：旧版 dnconsole 路径不存在时自动找 ldconsole ===
+        if ld_paths.get("ld_path"):
+            old_console = ld_paths.get("dnconsole", "")
+            if old_console and not os.path.isfile(old_console):
+                new_console = _find_ldconsole(ld_paths["ld_path"])
+                if new_console:
+                    ld_paths["dnconsole"] = new_console
+                    saved["paths"] = ld_paths
+                    save_tool_config(saved)
 
-        # 自动探测
-        self.ld_path_var.set("正在自动搜索 LDPlayer...")
-        threading.Thread(target=self._auto_detect_thread, daemon=True).start()
+        # 有保存路径就直接用
+        has_ld = ld_paths.get("ld_path") and bool(_find_ldconsole(ld_paths["ld_path"]))
+        has_mumu = mumu_path and os.path.isfile(mumu_path)
 
-    def _auto_detect_thread(self):
-        """后台自动探测路径"""
-        paths = auto_detect_paths()
-        self._ld_paths = paths
-        self.root.after(0, lambda: self._on_detect_done(paths))
+        if has_ld:
+            self._ld_paths = ld_paths
+            self.ld_path_var.set(ld_paths["ld_path"])
+            self.ld_path_entry.config(fg=TEXT)
+        if has_mumu:
+            self._mumu_path = mumu_path
+            self.mumu_path_var.set(mumu_path)
+            self.mumu_path_entry.config(fg=TEXT)
 
-    def _on_detect_done(self, paths):
-        if paths.get("ld_path"):
-            save_paths(paths)
-            self.ld_path_var.set(f"LDPlayer: {paths['ld_path']}")
-            self._scan_and_display_instances()
+        # 缺哪个就从桌面快捷方式搜 + 常见路径扫描
+        if not has_ld or not has_mumu:
+            def _work():
+                try:
+                    shortcuts = find_emulator_from_shortcuts()
+                    if not has_ld and shortcuts.get("ld_path"):
+                        p = shortcuts["ld_path"]
+                        console = _find_ldconsole(p)
+                        if console:
+                            self._ld_paths = {
+                                "ld_path": p,
+                                "dnconsole": console,
+                                "multiplayer_path": None,
+                                "dnmultiplayerex": None,
+                                "vms_config_dir": None,
+                            }
+                            vms = os.path.join(p, "vms", "config")
+                            if os.path.isdir(vms):
+                                self._ld_paths["vms_config_dir"] = vms
+                            self.root.after(0, lambda: self.ld_path_var.set(p))
+                            self.root.after(0, lambda: self.ld_path_entry.config(fg=TEXT))
+                    if not has_mumu and shortcuts.get("mumu_manager"):
+                        mp = shortcuts["mumu_manager"]
+                        if os.path.isfile(mp):
+                            self._mumu_path = mp
+                            self.root.after(0, lambda: self.mumu_path_var.set(mp))
+                    # 快捷方式没找到，扫常见安装路径（便携到新电脑时有用）
+                    if not self._ld_paths.get("ld_path"):
+                        self._scan_common_ld_paths()
+                    if not self._mumu_path:
+                        self._scan_common_mumu_paths()
+                    # 保存找到的路径
+                    self.root.after(0, self._save_all_paths)
+                    self.root.after(0, self._scan_and_display_instances)
+                except Exception:
+                    self.root.after(0, self._scan_and_display_instances)
+            threading.Thread(target=_work, daemon=True).start()
         else:
-            self.ld_path_var.set("未检测到 LDPlayer，点击刷新手动搜索")
-            if messagebox.askyesno("未检测到 LDPlayer",
-                                   "未在常见路径中找到 LDPlayer。\n"
-                                   "是否手动选择安装目录？"):
-                self._manual_select_ld_path()
+            self._scan_and_display_instances()
+
+    def _scan_common_ld_paths(self):
+        """扫描常见 LDPlayer 安装路径"""
+        for drive in "CDEFGHIJK":
+            for ver in ["LDPlayer9", "LDPlayer8", "LDPlayer"]:
+                for sub in ["", "E", "Program Files", "Program Files (x86)", "Programs", "Software"]:
+                    base = os.path.join(f"{drive}:\\", sub, ver) if sub else os.path.join(f"{drive}:\\", ver)
+                    console = _find_ldconsole(base)
+                    if console:
+                        p = base
+                        self._ld_paths = {
+                            "ld_path": p, "dnconsole": console,
+                            "multiplayer_path": None, "dnmultiplayerex": None,
+                            "vms_config_dir": None,
+                        }
+                        vms = os.path.join(p, "vms", "config")
+                        if os.path.isdir(vms):
+                            self._ld_paths["vms_config_dir"] = vms
+                        self.root.after(0, lambda: self.ld_path_var.set(p))
+                        self.root.after(0, lambda: self.ld_path_entry.config(fg=TEXT))
+                        return
+
+    def _scan_common_mumu_paths(self):
+        """扫描常见 MuMu 安装路径"""
+        for drive in "CDEFGHIJK":
+            for name in ["MuMu Player 12", "MuMuPlayer-12.0", "Netease"]:
+                for sub in ["", "E", "Program Files", "Program Files (x86)"]:
+                    base = os.path.join(f"{drive}:\\", sub, name) if sub else os.path.join(f"{drive}:\\", name)
+                    if not os.path.isdir(base):
+                        continue
+                    # 搜索 MuMuManager.exe
+                    for root, dirs, files in os.walk(base):
+                        if "MuMuManager.exe" in files:
+                            fp = os.path.join(root, "MuMuManager.exe")
+                            self._mumu_path = fp
+                            self.root.after(0, lambda: self.mumu_path_var.set(fp))
+                            return
+                        if root.count(os.sep) - base.count(os.sep) >= 2:
+                            dirs.clear()
+
+    def _save_all_paths(self):
+        """保存 LDPlayer 和 MuMu 路径到配置"""
+        config = load_tool_config()
+        if self._ld_paths:
+            config["paths"] = self._ld_paths
+        if self._mumu_path:
+            config["mumu_manager_path"] = self._mumu_path
+        save_tool_config(config)
+
+    def _validate_ld_path(self, raw_path):
+        """验证并保存 LDPlayer 路径"""
+        path = raw_path.strip().strip('"').strip("'")
+        _log_error(f"[DEBUG] _validate_ld_path 收到: [{raw_path}] => [{path}]")
+        if not path:
+            _log_error("[DEBUG] 路径为空")
+            return False
+        if not os.path.isdir(path):
+            _log_error(f"[DEBUG] 目录不存在: {path}")
+            return False
+        console = _find_ldconsole(path)
+        _log_error(f"[DEBUG] _find_ldconsole 返回: {console}")
+        if not console:
+            _log_error("[DEBUG] 没找到命令行工具")
+            return False
+        paths = {
+            "ld_path": path,
+            "dnconsole": console,
+            "multiplayer_path": None,
+            "dnmultiplayerex": None,
+            "vms_config_dir": None,
+        }
+        vms = os.path.join(path, "vms", "config")
+        if os.path.isdir(vms):
+            paths["vms_config_dir"] = vms
+            _log_error(f"[DEBUG] vms_config_dir = {vms}")
+        else:
+            _log_error(f"[DEBUG] vms/config 目录不存在: {vms}")
+        mp = os.path.join(os.path.dirname(path), "ldmutiplayer")
+        if os.path.isdir(mp):
+            paths["multiplayer_path"] = mp
+            paths["dnmultiplayerex"] = os.path.join(mp, "dnmultiplayerex.exe")
+            # 只有 LDPlayer 目录下没有 vms/config 才用多开器的
+            if not paths.get("vms_config_dir"):
+                vms2 = os.path.join(mp, "vms", "config")
+                if os.path.isdir(vms2):
+                    paths["vms_config_dir"] = vms2
+        self._ld_paths = paths
+        self.ld_path_var.set(path)
+        self.ld_path_entry.config(fg=TEXT)
+        self._save_all_paths()
+        _log_error("[DEBUG] 路径保存成功，准备刷新实例")
+        try:
+            self._scan_and_display_instances()
+            _log_error("[DEBUG] 刷新实例完成")
+        except Exception as e:
+            _log_error(f"[DEBUG] 刷新实例异常: {e}")
+        return True
+
+    def _validate_mumu_path(self, raw_path):
+        """验证并保存 MuMuManager.exe 路径"""
+        path = raw_path.strip().strip('"').strip("'").strip()
+        _log_error(f"[MUMU] 收到路径: [{raw_path}] => [{path}]")
+        if not path:
+            _log_error("[MUMU] 路径为空")
+            return False
+        if os.path.isdir(path):
+            for sub in ["", "nx_main"]:
+                candidate = os.path.join(path, sub, "MuMuManager.exe")
+                exists = os.path.isfile(candidate)
+                _log_error(f"[MUMU] 尝试 {candidate}: {'找到' if exists else '不存在'}")
+                if exists:
+                    path = candidate
+                    break
+        else:
+            _log_error(f"[MUMU] 不是目录，当文件处理: {path}")
+        _log_error(f"[MUMU] 最终路径: {path}, 存在={os.path.isfile(path) if path else False}")
+        if not os.path.isfile(path) or "MuMuManager" not in os.path.basename(path):
+            _log_error(f"[MUMU] 验证失败: 不存在或文件名不含 MuMuManager")
+            return False
+        self._mumu_path = path
+        self.mumu_path_var.set(path)
+        self.mumu_path_entry.config(fg=TEXT)
+        self._save_all_paths()
+        _log_error(f"[MUMU] 保存成功，准备刷新实例")
+        try:
+            self._scan_and_display_instances()
+            _log_error(f"[MUMU] 刷新完成")
+        except Exception as e:
+            _log_error(f"[MUMU] 刷新异常: {e}")
+        return True
+
+    def _on_ld_path_enter(self):
+        """LDPlayer 路径输入框回车/失焦处理"""
+        raw = self.ld_path_var.get()
+        ok = self._validate_ld_path(raw)
+        if ok:
+            self.ld_path_entry.config(fg=TEXT)
+        else:
+            if self._ld_paths.get("ld_path"):
+                self.ld_path_var.set(self._ld_paths["ld_path"])
+            else:
+                self.ld_path_var.set("")
+                self.ld_path_entry.config(fg=TEXT_LIGHT)
+            _log_error(f"LD路径验证失败: [{raw}]")
+
+    def _on_mumu_path_enter(self):
+        """MuMu 路径输入框回车/失焦处理"""
+        raw = self.mumu_path_var.get()
+        ok = self._validate_mumu_path(raw)
+        if ok:
+            self.mumu_path_entry.config(fg=TEXT)
+        else:
+            if self._mumu_path:
+                self.mumu_path_var.set(self._mumu_path)
+            else:
+                self.mumu_path_var.set("")
+                self.mumu_path_entry.config(fg=TEXT_LIGHT)
+            _log_error(f"MuMu路径验证失败: [{raw}]")
 
     def _manual_select_ld_path(self):
         """手动选择 LDPlayer 安装目录"""
         path = filedialog.askdirectory(title="选择 LDPlayer 安装目录")
-        if path and os.path.isfile(os.path.join(path, 'dnconsole.exe')):
-            paths = {
-                "ld_path": path,
-                "dnconsole": os.path.join(path, "dnconsole.exe"),
-                "multiplayer_path": None,
-                "dnmultiplayerex": None,
-                "vms_config_dir": None,
-            }
-            # 尝试找 vms config
-            vms_cfg = os.path.join(path, "vms", "config")
-            if os.path.isdir(vms_cfg):
-                paths["vms_config_dir"] = vms_cfg
-            save_paths(paths)
-            self._ld_paths = paths
-            self.ld_path_var.set(f"LDPlayer: {path}")
-            self._scan_and_display_instances()
-        elif path:
-            messagebox.showerror("错误", "所选目录中未找到 dnconsole.exe")
+        if not path:
+            return
+        console = _find_ldconsole(path)
+        if not console:
+            messagebox.showerror("错误", "所选目录中未找到 ldconsole.exe 或 dnconsole.exe\n请选择 LDPlayer 安装目录（如 D:\\E\\LDPlayer9）")
+            return
+        paths = {
+            "ld_path": path,
+            "dnconsole": console,
+            "multiplayer_path": None,
+            "dnmultiplayerex": None,
+            "vms_config_dir": None,
+        }
+        vms_cfg = os.path.join(path, "vms", "config")
+        if os.path.isdir(vms_cfg):
+            paths["vms_config_dir"] = vms_cfg
+        else:
+            # 也可能是多开器模式
+            mp = os.path.join(os.path.dirname(path), "ldmutiplayer")
+            if os.path.isdir(mp):
+                paths["multiplayer_path"] = mp
+                paths["dnmultiplayerex"] = os.path.join(mp, "dnmultiplayerex.exe")
+                vms_cfg2 = os.path.join(mp, "vms", "config")
+                if os.path.isdir(vms_cfg2):
+                    paths["vms_config_dir"] = vms_cfg2
+        self._ld_paths = paths
+        self.ld_path_var.set(path)
+        self.ld_path_entry.config(fg=TEXT)
+        self._save_all_paths()
+        self._scan_and_display_instances()
+
+    def _manual_select_mumu_path(self):
+        """手动选择 MuMuManager.exe 路径"""
+        path = filedialog.askopenfilename(
+            title="选择 MuMuManager.exe",
+            filetypes=[("可执行文件", "MuMuManager.exe"), ("所有文件", "*.*")]
+        )
+        if not path:
+            return
+        if not os.path.isfile(path) or "MuMuManager" not in os.path.basename(path):
+            messagebox.showerror("错误", "请选择 MuMuManager.exe 文件")
+            return
+        self._mumu_path = path
+        self.mumu_path_var.set(path)
+        self.mumu_path_entry.config(fg=TEXT)
+        self._save_all_paths()
+        self._scan_and_display_instances()
+
+    def _refresh_instances(self):
+        """刷新实例列表：重新扫描实例 + 尝试补全缺失路径"""
+        # 如果 MuMu 路径未设置，再次检测
+        if not self._mumu_path or not os.path.isfile(self._mumu_path):
+            try:
+                from ld_instance_manager import find_emulator_from_shortcuts
+                sc = find_emulator_from_shortcuts()
+                if sc.get("mumu_manager") and os.path.isfile(sc["mumu_manager"]):
+                    self._mumu_path = sc["mumu_manager"]
+                    self.mumu_path_var.set(sc["mumu_manager"])
+                    self._save_all_paths()
+                    self.mumu_path_entry.config(fg=TEXT)
+            except Exception:
+                pass
+        self._scan_and_display_instances()
 
     def _scan_and_display_instances(self):
-        """扫描并显示实例列表"""
+        """扫描并同时显示 LDPlayer + MuMu 实例"""
+        _log_error("[DEBUG] === _scan_and_display_instances 开始 ===")
+        # ---- 扫描 LDPlayer 实例 ----
         vms_cfg = self._ld_paths.get("vms_config_dir")
+        _log_error(f"[DEBUG] vms_cfg = {vms_cfg}")
         if not vms_cfg:
-            # 尝试在多开器目录找
             mp = self._ld_paths.get("multiplayer_path")
             if mp:
                 vms_cfg = os.path.join(mp, "vms", "config")
                 if not os.path.isdir(vms_cfg):
                     vms_cfg = None
-        if not vms_cfg:
-            self.ld_path_var.set(f"LDPlayer: {self._ld_paths.get('ld_path', '?')} | 未找到实例配置")
-            return
 
-        instances = scan_instances(vms_cfg)
-        dnconsole = self._ld_paths.get("dnconsole")
-        check_running_instances(instances, dnconsole)
-        self._instances = instances
+        ld_instances = []
+        if vms_cfg:
+            _log_error(f"[DEBUG] 调用 scan_instances({vms_cfg})")
+            ld_instances = scan_instances(vms_cfg)
+            _log_error(f"[DEBUG] scan_instances 返回 {len(ld_instances)} 个")
+            dnconsole = self._ld_paths.get("dnconsole")
+            check_running_instances(ld_instances, dnconsole)
+        else:
+            _log_error("[DEBUG] vms_cfg 为空，不扫描")
+        self._instances = ld_instances
 
-        # 清空旧行
+        # ---- 扫描 MuMu 实例 ----
+        mumu_instances = []
+        if self._mumu_path and os.path.isfile(self._mumu_path):
+            mumu_instances = scan_mumu_instances(self._mumu_path)
+        self._mumu_instances = mumu_instances
+
+        # ---- 清空旧行 ----
         for w in self.inst_rows_frame.winfo_children():
             w.destroy()
 
-        if not instances:
-            tk.Label(self.inst_rows_frame, text="  未找到实例",
-                     font=("Microsoft YaHei", 9), bg=CARD, fg=TEXT_SUB).pack(fill="x")
-            return
-
         self._inst_vars = []
-        for inst in instances:
-            row = tk.Frame(self.inst_rows_frame, bg=CARD)
-            row.pack(fill="x", pady=1)
+        has_any = bool(ld_instances or mumu_instances)
 
-            checked = inst['name'] in self._auto_launch_instances
-            var = tk.BooleanVar(value=checked)
-            cb = tk.Checkbutton(row, variable=var, bg=CARD,
-                                activebackground=CARD, selectcolor=CARD, width=4,
-                                command=self._save_auto_launch_instances)
-            cb.pack(side="left")
-            self._inst_vars.append((var, inst))
+        if not has_any:
+            tk.Label(self.inst_rows_frame, text="  未找到任何实例",
+                     font=("Microsoft YaHei", 9), bg=CARD, fg=TEXT_SUB).pack(fill="x")
+        else:
+            # >>> LDPlayer 实例 <<<
+            if ld_instances:
+                # 子标题
+                ld_hdr = tk.Frame(self.inst_rows_frame, bg=BG_LIGHT)
+                ld_hdr.pack(fill="x", pady=(0, 2))
+                tk.Label(ld_hdr, text="  ▎雷电模拟器", font=self.f_small,
+                         bg=BG_LIGHT, fg=PRIMARY).pack(side="left")
 
-            summary = get_instance_summary(inst['settings'])
-            root_mark = "✓" if summary['root'] else "✗"
-            set_text = f"{summary['cpu']}核 {summary['memory']}M Root:{root_mark}"
+                for inst in ld_instances:
+                    row = tk.Frame(self.inst_rows_frame, bg=CARD)
+                    row.pack(fill="x", pady=1)
 
-            # 显示实例名 + 自定义名字
-            display_name = inst['name']
-            if summary['name']:
-                display_name = f"{inst['name']} ({summary['name']})"
-            tk.Label(row, text=display_name, font=("Microsoft YaHei", 9, "bold"),
-                     bg=CARD, fg=TEXT, width=18, anchor="w").pack(side="left")
-            tk.Label(row, text=set_text, font=("Microsoft YaHei", 9),
-                     bg=CARD, fg=TEXT, width=30, anchor="w").pack(side="left")
+                    checked = inst['name'] in self._auto_launch_instances
+                    var = tk.BooleanVar(value=checked)
+                    cb = tk.Checkbutton(row, variable=var, bg=CARD,
+                                        activebackground=CARD, selectcolor=CARD, width=4,
+                                        command=self._save_auto_launch_instances)
+                    cb.pack(side="left")
+                    self._inst_vars.append((var, inst))
 
-            status = "运行中" if inst['running'] else "已停止"
-            color = GREEN if inst['running'] else TEXT_LIGHT
-            tk.Label(row, text=status, font=("Microsoft YaHei", 9),
-                     bg=CARD, fg=color, width=10, anchor="w").pack(side="left")
+                    summary = get_instance_summary(inst['settings'])
+                    root_mark = "✓" if summary['root'] else "✗"
+                    set_text = f"{summary['cpu']}核 {summary['memory']}M Root:{root_mark}"
 
-        self.ld_path_var.set(
-            f"LDPlayer: {self._ld_paths.get('ld_path', '?')} | "
-            f"多开器: {self._ld_paths.get('multiplayer_path', '未找到')} | "
-            f"实例: {len(instances)} 个"
-        )
+                    display_name = inst['name']
+                    if summary['name']:
+                        display_name = f"{inst['name']} ({summary['name']})"
+                    tk.Label(row, text=display_name, font=("Microsoft YaHei", 9, "bold"),
+                             bg=CARD, fg=TEXT, width=18, anchor="w").pack(side="left")
+                    tk.Label(row, text=set_text, font=("Microsoft YaHei", 9),
+                             bg=CARD, fg=TEXT, width=30, anchor="w").pack(side="left")
+
+                    status = "运行中" if inst['running'] else "已停止"
+                    color = GREEN if inst['running'] else TEXT_LIGHT
+                    tk.Label(row, text=status, font=("Microsoft YaHei", 9),
+                             bg=CARD, fg=color, width=8, anchor="w").pack(side="left")
+
+            # >>> MuMu 实例 <<<
+            if mumu_instances:
+                # 分隔
+                tk.Frame(self.inst_rows_frame, bg=BORDER, height=1).pack(fill="x", pady=(4, 2))
+                # 子标题
+                mm_hdr = tk.Frame(self.inst_rows_frame, bg=ORANGE_BG)
+                mm_hdr.pack(fill="x", pady=(0, 2))
+                tk.Label(mm_hdr, text="  ▎MuMu 模拟器", font=self.f_small,
+                         bg=ORANGE_BG, fg=ORANGE_DARK).pack(side="left")
+                # 操作按钮
+                RoundedButton(mm_hdr, text="▶ 启动全部", command=self._on_mumu_launch_all,
+                              bg=GREEN, fg="white", font=("Microsoft YaHei", 7), padx=6, pady=1).pack(side="right", padx=(0, 4))
+                RoundedButton(mm_hdr, text="⏹ 关闭全部", command=self._on_mumu_shutdown_all,
+                              bg=RED, fg="white", font=("Microsoft YaHei", 7), padx=6, pady=1).pack(side="right", padx=(0, 4))
+
+                for inst in mumu_instances:
+                    row = tk.Frame(self.inst_rows_frame, bg=CARD)
+                    row.pack(fill="x", pady=1)
+
+                    idx = inst['index']
+                    name = inst['name']
+                    running = inst['running']
+                    hyperv = inst['hyperv']
+
+                    display_name = f"MuMu-{idx} {name}"
+
+                    # 实例信息
+                    info_text = f"Hyper-V:{'✓' if hyperv else '✗'}  {inst.get('disk_size', 0)//1024//1024//1024}G"
+
+                    # 操作按钮（单个启动/停止）
+                    def make_launch_fn(i):
+                        return lambda: self._on_mumu_launch_one(i)
+                    def make_shutdown_fn(i):
+                        return lambda: self._on_mumu_shutdown_one(i)
+
+                    tk.Label(row, text=display_name, font=("Microsoft YaHei", 9, "bold"),
+                             bg=CARD, fg=TEXT, width=18, anchor="w").pack(side="left")
+                    tk.Label(row, text=info_text, font=("Microsoft YaHei", 9),
+                             bg=CARD, fg=TEXT, width=20, anchor="w").pack(side="left")
+
+                    status = "运行中" if running else "已停止"
+                    color = GREEN if running else TEXT_LIGHT
+                    tk.Label(row, text=status, font=("Microsoft YaHei", 9),
+                             bg=CARD, fg=color, width=8, anchor="w").pack(side="left")
+
+            # 更新路径显示 — 状态信息直接看实例列表，不额外显示
+            pass
 
         if not self._startup_launch_done:
             self.root.after(500, self._auto_launch_on_startup)
@@ -2840,7 +3322,7 @@ class EmulatorShutdownApp:
                 win.destroy()
 
             tk.Label(win, text="手动快照（保存的黄金配置）", font=self.f_sec,
-                     bg=BG, fg=PURPLE_DARK).pack(pady=(10, 4))
+                     bg=BG, fg=PRIMARY).pack(pady=(10, 4))
             tk.Label(win, text=f"共 {len(all_snapshots)} 份，支持多选（Ctrl/Shift+点击）",
                      font=self.f_small, bg=BG, fg=TEXT_SUB).pack(pady=(0, 6))
 
@@ -2934,7 +3416,7 @@ class EmulatorShutdownApp:
 
         dnconsole = self._ld_paths.get("dnconsole")
         if not dnconsole or not os.path.isfile(dnconsole):
-            messagebox.showerror("错误", "未找到 dnconsole.exe")
+            messagebox.showerror("错误", "未找到 LDPlayer 命令行工具")
             return
 
         try:
@@ -2964,6 +3446,59 @@ class EmulatorShutdownApp:
         self.launch_status_var.set(f"完成 {success}/{total}")
         self._scan_and_display_instances()
 
+    # ---------- MuMu 控制 ----------
+
+    def _on_mumu_launch_one(self, index):
+        """启动单个 MuMu 实例"""
+        def _work():
+            ok, msg = launch_mumu_instance(self._mumu_path, index)
+            self.root.after(0, lambda: messagebox.showinfo(
+                "启动结果" if ok else "启动失败", msg))
+            self.root.after(500, self._scan_and_display_instances)
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _on_mumu_shutdown_one(self, index):
+        """关闭单个 MuMu 实例"""
+        def _work():
+            ok, msg = shutdown_mumu_instance(self._mumu_path, index)
+            self.root.after(0, lambda: messagebox.showinfo(
+                "关闭结果" if ok else "关闭失败", msg))
+            self.root.after(500, self._scan_and_display_instances)
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _on_mumu_launch_all(self):
+        """启动所有 MuMu 实例"""
+        if not self._mumu_instances:
+            return
+        def _work():
+            total = len(self._mumu_instances)
+            success = 0
+            for inst in self._mumu_instances:
+                ok, msg = launch_mumu_instance(self._mumu_path, inst['index'])
+                if ok:
+                    success += 1
+                time.sleep(2)  # 间隔启动避免争抢资源
+            self.root.after(0, lambda: messagebox.showinfo(
+                "启动完成", f"成功 {success}/{total}"))
+            self.root.after(500, self._scan_and_display_instances)
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _on_mumu_shutdown_all(self):
+        """关闭所有 MuMu 实例"""
+        if not self._mumu_instances:
+            return
+        def _work():
+            total = len(self._mumu_instances)
+            success = 0
+            for inst in self._mumu_instances:
+                ok, msg = shutdown_mumu_instance(self._mumu_path, inst['index'])
+                if ok:
+                    success += 1
+            self.root.after(0, lambda: messagebox.showinfo(
+                "关闭完成", f"成功 {success}/{total}"))
+            self.root.after(500, self._scan_and_display_instances)
+        threading.Thread(target=_work, daemon=True).start()
+
     # ---------- 窗口关闭 ----------
 
     def _on_close(self):
@@ -2983,6 +3518,200 @@ class EmulatorShutdownApp:
 
     def _minimize_to_tray(self):
         self.root.iconify()
+
+    # ---------- 环境检测 ----------
+
+    def _rebuild_env_ui(self, features):
+        """重建环境状态行"""
+        for w in self.env_frame.winfo_children():
+            w.destroy()
+
+        if not features:
+            no_data = tk.Label(self.env_frame, text="点击「一键检测」开始检查",
+                                font=("Microsoft YaHei", 9),
+                                bg=CARD, fg=TEXT_LIGHT, anchor="w")
+            no_data.pack(fill="x", pady=4)
+            return
+
+        # 表头
+        hdr = tk.Frame(self.env_frame, bg=CARD)
+        hdr.pack(fill="x")
+        for txt, w in [("状态", 5), ("检测项", 24), ("当前状态", 20)]:
+            tk.Label(hdr, text=txt, font=("Microsoft YaHei", 8, "bold"),
+                     bg=CARD, fg=TEXT_SUB, width=w, anchor="w").pack(side="left")
+        tk.Frame(self.env_frame, bg=BORDER, height=1).pack(fill="x")
+
+        for ft in features:
+            row = tk.Frame(self.env_frame, bg=CARD)
+            row.pack(fill="x", pady=1)
+
+            enabled = ft.get("enabled")
+            name = ft.get("name", "")
+            label = ft.get("label", name)
+            raw = ft.get("raw", "")
+
+            if enabled is True:
+                dot_color = RED
+                status_txt = "⚠ 已启用"
+            elif enabled is False:
+                dot_color = GREEN
+                status_txt = "✓ 已关闭"
+            else:
+                dot_color = TEXT_LIGHT
+                status_txt = "? 未知"
+
+            # 状态圆点
+            dot = tk.Frame(row, bg=dot_color, width=10, height=10,
+                           highlightthickness=0, bd=0)
+            dot.pack(side="left", padx=(4, 6))
+            dot.pack_propagate(False)
+
+            # 检测项名称
+            tk.Label(row, text=label, font=("Microsoft YaHei", 8),
+                     bg=CARD, fg=TEXT, width=24, anchor="w").pack(side="left")
+
+            # 状态值
+            tk.Label(row, text=raw or status_txt, font=("Consolas", 8),
+                     bg=CARD, fg=dot_color, width=20, anchor="w").pack(side="left")
+
+    def _on_env_scan(self):
+        """一键检测 — 在后台线程执行"""
+        self.env_scan_btn.set_text("检测中...")
+        self.env_scan_btn.config_bg(TEXT_LIGHT)
+        self.env_status_var.set("正在检测系统环境...")
+        self.env_fix_btn.pack_forget()
+
+        def _work():
+            try:
+                from ld_instance_manager import get_emulator_environment_report
+                report = get_emulator_environment_report()
+                self.root.after(0, lambda: self._update_env_display(report))
+            except Exception as e:
+                import traceback
+                self.root.after(0, lambda: self.env_status_var.set(f"检测失败: {str(e)}"))
+                self.root.after(0, lambda: self.env_scan_btn.set_text("🔄 一键检测"))
+                self.root.after(0, lambda: self.env_scan_btn.config_bg(PRIMARY))
+
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _update_env_display(self, report):
+        """更新环境检测 UI"""
+        self.env_scan_btn.set_text("🔄 一键检测")
+        self.env_scan_btn.config_bg(PRIMARY)
+
+        features = report.get("features", [])
+        issues = report.get("issues", [])
+        score = report.get("overall_score", 100)
+        ld_info = report.get("ldplayer", {})
+        vt_info = report.get("cpu_vt", {})
+
+        # 更新状态行
+        self._rebuild_env_ui(features)
+
+        # 额外添加上LDPlayer版本和CPU虚拟化
+        extra_frame = tk.Frame(self.env_frame, bg=CARD)
+        extra_frame.pack(fill="x", pady=(2, 0))
+        # LDPlayer 信息
+        ld_label = ld_info.get("detail", "未检测到")
+        tk.Label(extra_frame, text=f"📱 {ld_label}", font=("Microsoft YaHei", 8),
+                 bg=CARD, fg=TEXT_SUB, anchor="w").pack(side="left", padx=(20, 0))
+        # VT-x 信息
+        vt_enabled = vt_info.get("enabled")
+        if vt_enabled is True:
+            vt_txt = "✓ VT-x/AMD-V 已开启"
+            vt_color = GREEN
+        elif vt_enabled is False:
+            vt_txt = "✗ VT-x/AMD-V 未开启! 请进BIOS开启"
+            vt_color = RED
+        else:
+            vt_txt = "? VT-x/AMD-V 状态未知"
+            vt_color = TEXT_LIGHT
+        tk.Label(extra_frame, text=vt_txt, font=("Microsoft YaHei", 8),
+                 bg=CARD, fg=vt_color, anchor="w").pack(side="left", padx=(20, 0))
+
+        # 评分
+        if score >= 80:
+            score_color = GREEN
+            score_text = f"环境评分: {score}/100 ✓"
+        elif score >= 50:
+            score_color = YELLOW
+            score_text = f"环境评分: {score}/100 ⚠"
+        else:
+            score_color = RED
+            score_text = f"环境评分: {score}/100 ✗"
+        self.env_score_var.set(score_text)
+        self.env_score_lbl.config(fg=score_color)
+
+        # 详情文本
+        detail_lines = []
+        if issues:
+            for i, issue in enumerate(issues, 1):
+                icon = {"critical": "🔴", "warning": "🟡", "info": "ℹ️"}.get(issue["severity"], "•")
+                detail_lines.append(f"{icon} [{issue['severity'].upper()}] {issue['message']}")
+        else:
+            detail_lines.append("✓ 环境正常，无冲突问题")
+
+        self.env_detail_text.config(state="normal")
+        self.env_detail_text.delete("1.0", tk.END)
+        self.env_detail_text.insert("1.0", "\n".join(detail_lines))
+        self.env_detail_text.config(state="disabled")
+
+        # 显示/隐藏修复按钮
+        can_fix = report.get("can_auto_fix", False)
+        if can_fix:
+            self.env_fix_btn.pack(side="left", padx=(0, 6))
+            self.env_status_var.set(f"发现 {len(issues)} 个问题，点击「一键修复」")
+        else:
+            self.env_fix_btn.pack_forget()
+            if not issues:
+                self.env_status_var.set("环境正常 ✓")
+            else:
+                self.env_status_var.set(f"{len(issues)} 个问题，需手动处理")
+
+    def _on_env_fix(self):
+        """一键修复 — 关闭所有冲突功能"""
+        if not messagebox.askyesno("一键修复",
+                                    "将自动关闭以下功能（需要管理员权限）：\n"
+                                    "  • Hyper-V\n"
+                                    "  • Windows Hypervisor Platform\n"
+                                    "  • Virtual Machine Platform\n"
+                                    "  • VBS（基于虚拟化的安全）— 通过 bcdedit 禁用\n\n"
+                                    "⚠ 部分功能关闭后需要「完全关机」（不是重启）才能生效。\n"
+                                    "继续吗？"):
+            return
+
+        self.env_fix_btn.set_text("修复中...")
+        self.env_fix_btn.config_bg(TEXT_LIGHT)
+        self.env_status_var.set("正在关闭冲突功能...")
+
+        def _work():
+            try:
+                from ld_instance_manager import apply_all_fixes
+                results = apply_all_fixes()
+                success_count = sum(1 for _, ok, _ in results if ok)
+                total = len(results)
+
+                lines = [f"修复完成：成功 {success_count}/{total}"]
+                for fn, ok, msg in results:
+                    lines.append(f"  {'✓' if ok else '✗'} {fn}: {msg}")
+
+                self.root.after(0, lambda: self.env_status_var.set(
+                    f"修复完成 ({success_count}/{total})，请手动重启电脑"))
+                self.root.after(0, lambda: self.env_fix_btn.set_text("🔧 一键修复"))
+                self.root.after(0, lambda: self.env_fix_btn.config_bg(RED))
+                self.root.after(0, lambda: self.env_detail_text.config(state="normal"))
+                self.root.after(0, lambda: self.env_detail_text.delete("1.0", tk.END))
+                self.root.after(0, lambda: self.env_detail_text.insert("1.0", "\n".join(lines)))
+                self.root.after(0, lambda: self.env_detail_text.config(state="disabled"))
+                # 重新检测
+                self.root.after(1000, self._on_env_scan)
+            except Exception as e:
+                import traceback
+                self.root.after(0, lambda: self.env_status_var.set(f"修复失败: {str(e)}"))
+                self.root.after(0, lambda: self.env_fix_btn.set_text("🔧 一键修复"))
+                self.root.after(0, lambda: self.env_fix_btn.config_bg(RED))
+
+        threading.Thread(target=_work, daemon=True).start()
 
 
 # ============================================================
@@ -3026,9 +3755,14 @@ def main():
                 pass
 
         root = tk.Tk()
-        root.withdraw()
+        # 先设背景色再隐藏，避免白屏闪烁
         root.configure(bg=BG)
+        root.withdraw()
+        # 确保窗口已完全初始化
+        root.update_idletasks()
         app = EmulatorShutdownApp(root)
+        # 确保所有 UI 渲染完成后再显示
+        root.update_idletasks()
         root.deiconify()
         root.mainloop()
     except Exception:
