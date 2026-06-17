@@ -2207,23 +2207,42 @@ class EmulatorShutdownApp:
         t["vars"]["st_lbl"].config(text="启动中…", fg=YELLOW)
 
         dnconsole = self._ld_paths.get("dnconsole")
-        if not dnconsole or not os.path.isfile(dnconsole):
-            t["vars"]["st_lbl"].config(text="未找到 dnconsole", fg=RED)
+        has_ld = dnconsole and os.path.isfile(dnconsole)
+        has_mumu = bool(self._mumu_path and os.path.isfile(self._mumu_path))
+
+        if not has_ld and not has_mumu:
+            t["vars"]["st_lbl"].config(text="无模拟器路径", fg=RED)
             return
 
-        instances = t["instances"][:]
-        if not instances:
-            t["vars"]["st_lbl"].config(text="无实例可选", fg=TEXT_LIGHT)
-            return
+        ld_instances = t["instances"][:] if has_ld else []
 
         def _work():
-            results = staggered_launch(
-                dnconsole, instances, interval_seconds=5,
-                on_status=lambda s: self.root.after(0, lambda: t["vars"]["st_lbl"].config(text=s[:30], fg=YELLOW)),
-            )
-            ok = sum(1 for _, s, _ in results if s)
+            results = []
+            # 启动 LDPlayer 实例
+            if ld_instances:
+                results = staggered_launch(
+                    dnconsole, ld_instances, interval_seconds=5,
+                    on_status=lambda s: self.root.after(0, lambda: t["vars"]["st_lbl"].config(text=s[:30], fg=YELLOW)),
+                )
+            # 启动 MuMu 实例
+            mumu_ok = 0
+            mumu_total = 0
+            if has_mumu and self._mumu_instances:
+                mumu_total = len(self._mumu_instances)
+                self.root.after(0, lambda: t["vars"]["st_lbl"].config(text=f"启动 MuMu ({mumu_total}个)…", fg=YELLOW))
+                import time as _time
+                for inst in self._mumu_instances:
+                    try:
+                        ok, _ = launch_mumu_instance(self._mumu_path, inst['index'])
+                        if ok:
+                            mumu_ok += 1
+                        _time.sleep(2)
+                    except Exception:
+                        pass
+            total = len(results) + mumu_total
+            ok = sum(1 for _, s, _ in results if s) + mumu_ok
             self.root.after(0, lambda: t["vars"]["st_lbl"].config(
-                text=f"完成 {ok}/{len(results)}", fg=GREEN if ok == len(results) else YELLOW))
+                text=f"完成 {ok}/{total}", fg=GREEN if ok == total else YELLOW))
             self.root.after(0, self._scan_and_display_instances)
             if t["mode"] == "fixed":
                 t["auto_reset_id"] = self.root.after(2000, lambda: self._autoreset_launch(t))
