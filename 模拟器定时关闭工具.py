@@ -2103,14 +2103,14 @@ class EmulatorShutdownApp:
         self._save_tasks_config()
 
     def _pick_instances(self, task, btn):
-        """弹出实例选择对话框"""
-        if not self._instances:
+        """弹出实例选择对话框（含 LDPlayer + MuMu）"""
+        if not self._instances and not self._mumu_instances:
             messagebox.showinfo("提示", "未检测到实例，请先扫描")
             return
 
         win = tk.Toplevel(self.root)
         win.title("选择实例")
-        win.geometry("300x350")
+        win.geometry("320x400")
         win.configure(bg=BG)
         win.transient(self.root)
         win.grab_set()
@@ -2131,14 +2131,39 @@ class EmulatorShutdownApp:
         sb.pack(side="right", fill="y")
 
         vars_dict = {}
-        for inst in self._instances:
-            checked = inst['name'] in task['instances']
-            var = tk.BooleanVar(value=checked)
-            cb = tk.Checkbutton(inner, text=inst['name'], variable=var,
-                                bg=CARD, fg=TEXT, activebackground=CARD,
-                                selectcolor=CARD, anchor="w")
-            cb.pack(fill="x", padx=8, pady=1)
-            vars_dict[inst['name']] = var
+
+        # LDPlayer 实例
+        if self._instances:
+            tk.Label(inner, text="  ▎雷电模拟器", font=("Microsoft YaHei", 8, "bold"),
+                     bg=CARD, fg=PRIMARY, anchor="w").pack(fill="x", padx=8, pady=(4, 1))
+            for inst in self._instances:
+                checked = inst['name'] in task['instances']
+                var = tk.BooleanVar(value=checked)
+                display = inst['name']
+                summary = get_instance_summary(inst.get('settings', {}))
+                if summary.get('name'):
+                    display = f"{inst['name']} ({summary['name']})"
+                cb = tk.Checkbutton(inner, text=display, variable=var,
+                                    bg=CARD, fg=TEXT, activebackground=CARD,
+                                    selectcolor=CARD, anchor="w")
+                cb.pack(fill="x", padx=8, pady=1)
+                vars_dict[inst['name']] = var
+
+        # MuMu 实例
+        if self._mumu_instances:
+            tk.Frame(inner, bg=BORDER, height=1).pack(fill="x", padx=8, pady=2)
+            tk.Label(inner, text="  ▎MuMu 模拟器", font=("Microsoft YaHei", 8, "bold"),
+                     bg=CARD, fg=ORANGE_DARK, anchor="w").pack(fill="x", padx=8, pady=(2, 1))
+            for inst in self._mumu_instances:
+                inst_key = f"mumu_{inst['index']}"
+                checked = inst_key in task['instances']
+                var = tk.BooleanVar(value=checked)
+                display = f"MuMu-{inst['index']} {inst['name']}"
+                cb = tk.Checkbutton(inner, text=display, variable=var,
+                                    bg=CARD, fg=TEXT, activebackground=CARD,
+                                    selectcolor=CARD, anchor="w")
+                cb.pack(fill="x", padx=8, pady=1)
+                vars_dict[inst_key] = var
 
         def _confirm():
             selected = [name for name, var in vars_dict.items() if var.get()]
@@ -2214,26 +2239,28 @@ class EmulatorShutdownApp:
             t["vars"]["st_lbl"].config(text="无模拟器路径", fg=RED)
             return
 
-        ld_instances = t["instances"][:] if has_ld else []
+        all_selected = t["instances"][:]
+        ld_instances = [n for n in all_selected if not n.startswith("mumu_")]
+        mumu_selected = [n for n in all_selected if n.startswith("mumu_")]
 
         def _work():
             results = []
             # 启动 LDPlayer 实例
-            if ld_instances:
+            if ld_instances and has_ld:
                 results = staggered_launch(
                     dnconsole, ld_instances, interval_seconds=5,
                     on_status=lambda s: self.root.after(0, lambda: t["vars"]["st_lbl"].config(text=s[:30], fg=YELLOW)),
                 )
-            # 启动 MuMu 实例
+            # 启动 MuMu 实例（从 selected key 提取索引）
             mumu_ok = 0
-            mumu_total = 0
-            if has_mumu and self._mumu_instances:
-                mumu_total = len(self._mumu_instances)
+            mumu_total = len(mumu_selected)
+            if mumu_selected and has_mumu:
                 self.root.after(0, lambda: t["vars"]["st_lbl"].config(text=f"启动 MuMu ({mumu_total}个)…", fg=YELLOW))
                 import time as _time
-                for inst in self._mumu_instances:
+                for key in mumu_selected:
                     try:
-                        ok, _ = launch_mumu_instance(self._mumu_path, inst['index'])
+                        idx = key.replace("mumu_", "")
+                        ok, _ = launch_mumu_instance(self._mumu_path, idx)
                         if ok:
                             mumu_ok += 1
                         _time.sleep(2)
