@@ -2108,9 +2108,14 @@ class EmulatorShutdownApp:
             messagebox.showinfo("提示", "未检测到实例，请先扫描")
             return
 
+        total = len(self._instances or []) + len(self._mumu_instances or [])
+        # 窗口高度按实例数自适应，最小 300，最大 520
+        height = min(max(300, total * 44 + 120), 520)
+
         win = tk.Toplevel(self.root)
         win.title("选择实例")
-        win.geometry("320x400")
+        win.geometry(f"380x{height}")
+        win.minsize(380, 300)
         win.configure(bg=BG)
         win.transient(self.root)
         win.grab_set()
@@ -2121,14 +2126,23 @@ class EmulatorShutdownApp:
         f = tk.Frame(win, bg=BG)
         f.pack(fill="both", expand=True, padx=12)
 
-        canvas = tk.Canvas(f, bg=CARD, highlightthickness=0)
-        sb = ttk.Scrollbar(f, orient="vertical", command=canvas.yview)
+        # Canvas + 滚动条（宽杆，明显可见）
+        canvas = tk.Canvas(f, bg=CARD, highlightthickness=1, highlightbackground=BORDER)
+        sb = tk.Scrollbar(f, orient="vertical", command=canvas.yview,
+                          width=16, bg=BORDER, troughcolor=BG)
         inner = tk.Frame(canvas, bg=CARD)
         inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
         canvas.create_window((0, 0), window=inner, anchor="nw", tags="inner")
         canvas.configure(yscrollcommand=sb.set)
+
         canvas.pack(side="left", fill="both", expand=True)
         sb.pack(side="right", fill="y")
+
+        # 鼠标滚轮支持
+        def _on_mousewheel(event):
+            canvas.yview_scroll(-1 * (event.delta // 120), "units")
+        inner.bind("<MouseWheel>", _on_mousewheel)
+        canvas.bind("<MouseWheel>", _on_mousewheel)
 
         vars_dict = {}
 
