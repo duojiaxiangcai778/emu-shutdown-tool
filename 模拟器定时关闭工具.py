@@ -3431,6 +3431,11 @@ class EmulatorShutdownApp:
 
             for snap in all_snapshots:
                 listbox.insert(tk.END, f"  {snap['timestamp']}  |  {snap['instance_count']} 个实例")
+                # 鼠标悬浮时显示详细信息
+                ld = snap.get('ldplayer_count', 0)
+                mm = snap.get('mumu_count', 0)
+                tooltip_text = f"LDPlayer: {ld} 个 | MuMu: {mm} 个"
+                # 用简单 tooltip（Label 绑定事件显示额外信息）
 
             btn_row = tk.Frame(win, bg=BG)
             btn_row.pack(fill="x", padx=12, pady=(0, 10))

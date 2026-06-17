@@ -598,10 +598,15 @@ def list_snapshots(snapshot_base_dir):
                         meta = json.load(f)
                 except Exception:
                     pass
+            ld_cnt = meta.get("ldplayer_count") or meta.get("instance_count") or 0
+            mm_cnt = meta.get("mumu_count", 0)
+            total = ld_cnt + mm_cnt
             snapshots.append({
                 "name": name,
                 "path": snap_dir,
-                "instance_count": meta.get("instance_count", 0),
+                "instance_count": total,
+                "ldplayer_count": ld_cnt,
+                "mumu_count": mm_cnt,
                 "timestamp": meta.get("timestamp", name),
             })
     return snapshots
