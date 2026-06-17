@@ -249,22 +249,22 @@ def get_process_windows(pid):
 
 
 # ============================================================
-# 内嵌图标（base64 编码的粉紫圆形 32x32 ICO）
+# 图标
 # ============================================================
-_APP_ICON_B64 = "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"
-
 
 def _get_icon_path():
-    """将内嵌图标解压到临时目录，返回路径"""
-    import tempfile
-    path = os.path.join(tempfile.gettempdir(), "emu_shutdown_icon.ico")
-    if not os.path.exists(path):
-        try:
-            with open(path, "wb") as f:
-                f.write(__import__("base64").b64decode(_APP_ICON_B64))
-        except Exception:
-            return None
-    return path
+    """从 exe 同级目录加载图标，找不到则返回 None"""
+    try:
+        if getattr(sys, 'frozen', False):
+            _dir = os.path.dirname(os.path.abspath(sys.executable))
+        else:
+            _dir = os.path.dirname(os.path.abspath(__file__))
+        ico = os.path.join(_dir, "app_icon.ico")
+        if os.path.isfile(ico):
+            return ico
+    except Exception:
+        pass
+    return None
 
 
 # ============================================================
