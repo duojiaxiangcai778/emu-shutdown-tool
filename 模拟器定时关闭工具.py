@@ -2342,22 +2342,6 @@ class EmulatorShutdownApp:
             interval = 5
 
         def _work():
-            self.root.after(0, lambda: self.launch_status_var.set("正在恢复配置..."))
-            vms_cfg = self._ld_paths.get("vms_config_dir")
-            mp_cfg = None
-            mp = self._ld_paths.get("multiplayer_path")
-            if mp:
-                mp_cfg = os.path.join(mp, "vms", "config")
-
-            snapshots = list_snapshots(SNAPSHOT_DIR)
-            if snapshots:
-                latest = snapshots[0]
-                count, msg = restore_snapshot(latest['path'], vms_cfg, mp_cfg)
-                self.root.after(0, lambda: self.launch_status_var.set(f"已恢复配置: {msg}"))
-                time.sleep(1)
-            else:
-                self.root.after(0, lambda: self.launch_status_var.set("无快照，跳过恢复"))
-
             self.root.after(0, lambda: self.launch_status_var.set(f"正在启动 {len(selected)} 个实例..."))
             results = staggered_launch(
                 dnconsole, selected, interval,
