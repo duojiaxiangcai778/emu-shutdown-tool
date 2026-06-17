@@ -34,7 +34,7 @@ from ld_instance_manager import (
     launch_instance, staggered_launch,
     load_tool_config, save_tool_config,
     get_saved_paths, save_paths,
-    TOOL_CONFIG_FILE, SNAPSHOT_DIR,
+    TOOL_CONFIG_FILE, SNAPSHOT_DIR, find_vms_config_dir,
 )
 
 
@@ -576,6 +576,17 @@ def graceful_kill_async(on_done, on_status=None, on_progress=None,
                 _, backup_msg = backup_config_files(backup_dir)
                 _cleanup_old_backups(backup_dir)
                 _status(backup_msg)
+
+                # 也保存一份到快照目录，作为启动时的恢复点
+                vms_cfg_dir = find_vms_config_dir()
+                if vms_cfg_dir:
+                    mp_cfg_dir = None
+                    ld_p = find_ldplayer_install_path(_do_scan() or [])
+                    if ld_p:
+                        mp_path = os.path.join(os.path.dirname(ld_p), 'ldmutiplayer', 'vms', 'config')
+                        if os.path.isdir(mp_path):
+                            mp_cfg_dir = mp_path
+                    save_snapshot(vms_cfg_dir, mp_cfg_dir, SNAPSHOT_DIR)
 
             if not procs:
                 elapsed = int(time.time() - start_ts)
@@ -2318,10 +2329,13 @@ class EmulatorShutdownApp:
         return self._auto_launch_instances
 
     def _auto_launch_on_startup(self):
-        """软件启动时自动启动勾选的实例（先恢复配置，再启动）"""
+        """软件启动时自动启动勾选的实例
+        策略：仅当实例配置文件丢失或损坏时从快照恢复，配置正常则直接启动
+        关闭前自动保存"最后状态"快照，确保有关机恢复点
+        """
         if self._startup_launch_done:
             return
-        self._startup_launch_done = True  # 无论是否启用，只执行一次
+        self._startup_launch_done = True
         if not self.auto_launch_var.get():
             return
         if not self._auto_launch_instances:
@@ -2342,6 +2356,43 @@ class EmulatorShutdownApp:
             interval = 5
 
         def _work():
+            vms_cfg = self._ld_paths.get("vms_config_dir")
+            restored = False
+            if vms_cfg and os.path.isdir(vms_cfg):
+                # 检查所有勾选实例的配置文件是否完好
+                config_ok = True
+                for name in selected:
+                    cfg_path = os.path.join(vms_cfg, f"{name}.config")
+                    if not os.path.isfile(cfg_path):
+                        config_ok = False
+                        break
+                    try:
+                        with open(cfg_path, 'r', encoding='utf-8') as f:
+                            cfg = json.load(f)
+                        if not cfg or not isinstance(cfg, dict):
+                            config_ok = False
+                            break
+                    except Exception:
+                        config_ok = False
+                        break
+
+                if not config_ok:
+                    # 配置文件损坏或丢失，从快照恢复
+                    self.root.after(0, lambda: self.launch_status_var.set("配置异常，正在从快照恢复..."))
+                    mp_cfg = None
+                    mp = self._ld_paths.get("multiplayer_path")
+                    if mp:
+                        mp_cfg = os.path.join(mp, "vms", "config")
+                    snapshots = list_snapshots(SNAPSHOT_DIR)
+                    if snapshots:
+                        latest = snapshots[0]
+                        count, msg = restore_snapshot(latest['path'], vms_cfg, mp_cfg)
+                        restored = True
+                        self.root.after(0, lambda s=msg: self.launch_status_var.set(f"已恢复: {s}"))
+                        time.sleep(1)
+                else:
+                    self.root.after(0, lambda: self.launch_status_var.set("配置正常，跳过恢复"))
+
             self.root.after(0, lambda: self.launch_status_var.set(f"正在启动 {len(selected)} 个实例..."))
             results = staggered_launch(
                 dnconsole, selected, interval,
