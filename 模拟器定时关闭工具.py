@@ -285,7 +285,8 @@ MUMU_PROCESS_KEYWORDS = [
     "memevey", "mumuplayer", "mumuvmmgr", "mumugame",
     "nemuplayer", "nemu", "nemuservice", "mumu",
     "nemuheadless", "nemumultiplayer",
-    "mumuemu", "mumuservice",
+    "mumuemu", "mumuservice", "mumumanager",
+    "mumu12", "mumu6",
 ]
 
 IGNORED_PROCESS_KEYWORDS = [
@@ -597,17 +598,57 @@ def graceful_kill_async(on_done, on_status=None, on_progress=None,
                 on_done(0, 0, 0, [], backup_msg, shutdown_executed)
                 return
 
-            # ---- 阶段1：dnconsole quitall（最优雅，所有实例一起关）----
+            # ---- 阶段1：dnconsole quitall（LDPlayer 优雅关闭）----
             ld_path = find_ldplayer_install_path(procs)
             dnconsole_path = None
             if ld_path:
                 dnconsole_path = os.path.join(ld_path, 'dnconsole.exe')
                 if os.path.exists(dnconsole_path):
-                    _status("通过 dnconsole quitall 优雅关闭所有实例...")
+                    _status("通过 dnconsole quitall 优雅关闭 LDPlayer 实例...")
                     _progress(10)
                     try:
                         subprocess.run([dnconsole_path, 'quitall'], capture_output=True,
                                        text=True, timeout=15,
+                                       creationflags=subprocess.CREATE_NO_WINDOW)
+                    except Exception:
+                        pass
+
+            # ---- 阶段1b：MuMuManager（MuMu 优雅关闭）----
+            has_mumu = any(p.get('type') == 'mumu' for p in procs)
+            if has_mumu:
+                # 搜索 MuMuManager.exe
+                mumu_mgr = None
+                for candidate in [
+                    r'C:\Program Files\Netease\MuMuPlayer-12.0\shell\MuMuManager.exe',
+                    r'C:\Program Files\Netease\MuMuPlayer-12.0\MuMuManager.exe',
+                    r'C:\Program Files\MuMuPlayer-12.0\shell\MuMuManager.exe',
+                    r'C:\Program Files (x86)\Netease\MuMuPlayer-12.0\shell\MuMuManager.exe',
+                ]:
+                    if os.path.isfile(candidate):
+                        mumu_mgr = candidate
+                        break
+                # 也搜索进程路径
+                if not mumu_mgr:
+                    for proc in procs:
+                        if proc.get('type') == 'mumu':
+                            try:
+                                r = subprocess.run(
+                                    ['wmic', 'process', 'where', f'ProcessId={proc["pid"]}', 'get', 'ExecutablePath'],
+                                    capture_output=True, text=True, timeout=5,
+                                    creationflags=subprocess.CREATE_NO_WINDOW
+                                )
+                                for line in r.stdout.strip().split('\n'):
+                                    line = line.strip()
+                                    if 'MuMuManager' in line and os.path.isfile(line):
+                                        mumu_mgr = line
+                                        break
+                            except Exception:
+                                pass
+                if mumu_mgr:
+                    _status("通过 MuMuManager 优雅关闭 MuMu 模拟器...")
+                    try:
+                        subprocess.run([mumu_mgr, 'shutdown', '-n', 'all'],
+                                       capture_output=True, text=True, timeout=15,
                                        creationflags=subprocess.CREATE_NO_WINDOW)
                     except Exception:
                         pass
