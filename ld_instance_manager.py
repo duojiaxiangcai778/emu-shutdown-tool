@@ -692,7 +692,7 @@ def launch_instance(dnconsole_path, instance_name, timeout=30):
             raw = (r.stdout.strip() or r.stderr.strip() or "")
             # 如果输出包含帮助文本（启动参数错误），给出友好提示
             if "Usage:" in raw or "Commands :" in raw or "dnconsole <command>" in raw.lower():
-                msg = f"启动失败，dnconsole 返回帮助信息（--index {index} 参数可能不被支持）"
+                msg = f"启动失败，dnconsole 返回帮助信息（--index 参数可能不被支持，实例: {instance_name}）"
             else:
                 msg = raw or f"ShellExecuteW返回{err_code}"
         except Exception:
@@ -712,7 +712,7 @@ def launch_instance(dnconsole_path, instance_name, timeout=30):
             raw2 = (r.stdout.strip() or r.stderr.strip() or str(e))
             # 同上，过滤帮助文本
             if "Usage:" in raw2 or "Commands :" in raw2 or "dnconsole <command>" in raw2.lower():
-                msg = f"启动失败，dnconsole 返回帮助信息（--index {index} 参数可能不被支持）"
+                msg = f"启动失败，dnconsole 返回帮助信息（--index 参数可能不被支持，实例: {instance_name}）"
             else:
                 msg = raw2
         except subprocess.TimeoutExpired:
@@ -814,6 +814,7 @@ def save_paths(paths):
     """保存路径配置"""
     config = load_tool_config()
     config["paths"] = paths
+    save_tool_config(config)
 
 
 # ============================================================

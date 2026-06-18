@@ -394,9 +394,10 @@ def _scan_wmic():
                 continue
             parts = line.split(',')
             if len(parts) >= 3:
+                # WMIC CSV 列顺序（字母序）: Node, ExecutablePath, Name, ProcessId
                 name = parts[-2].lower()
-                exe = parts[-1].lower()
-                pid_str = parts[-3] if len(parts) >= 4 else ''
+                exe = parts[-3].lower() if len(parts) >= 4 else name
+                pid_str = parts[-1].strip()
                 combined = f"{name} {exe}"
 
                 if any(kw in combined for kw in IGNORED_PROCESS_KEYWORDS):
@@ -668,7 +669,7 @@ def graceful_kill_async(on_done, on_status=None, on_progress=None,
             dnconsole_path = None
             if ld_path:
                 dnconsole_path = _find_ldconsole(ld_path)
-                if os.path.exists(dnconsole_path):
+                if dnconsole_path and os.path.exists(dnconsole_path):
                     _status("通过 dnconsole quitall 优雅关闭 LDPlayer 实例...")
                     _progress(10)
                     try:
@@ -1120,7 +1121,7 @@ class RoundedButton(tk.Frame):
 class EmulatorShutdownApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("模拟器管理工具 v4.1")
+        self.root.title("模拟器管理工具 v4.2")
         try:
             ico = _get_icon_path()
             if ico:
@@ -1220,7 +1221,12 @@ class EmulatorShutdownApp:
             main_canvas.itemconfig("main_inner", width=event.width)
         main_canvas.bind("<Configure>", _on_mf_cfg)
         def _on_mw(event):
-            main_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            w = event.widget
+            while w:
+                if w == main_canvas:
+                    main_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+                    break
+                w = getattr(w, "master", None)
         main_canvas.bind_all("<MouseWheel>", _on_mw)
 
         # ---------- 卡片工厂 ----------
@@ -1382,6 +1388,8 @@ class EmulatorShutdownApp:
                       bg=GREEN, fg="white", font=self.f_small, padx=8).pack(side="left", padx=(0, 4))
         RoundedButton(ib, text="⏎ 恢复", command=self._restore_snapshot,
                       bg=YELLOW, fg="white", font=self.f_small, padx=8).pack(side="left", padx=(0, 8))
+        RoundedButton(ib, text="⏹ 关闭所有", command=self._on_kill_now,
+                      bg=RED, fg="white", font=self.f_small, padx=8).pack(side="left", padx=(0, 8))
 
         # 间隔启动控件
         tk.Label(ib, text="间隔", font=self.f_small, bg=CARD, fg=TEXT_SUB).pack(side="left")
@@ -1435,6 +1443,20 @@ class EmulatorShutdownApp:
         RoundedButton(rbtn, text="■ 停止", command=lambda: self._stop_all("shutdown"),
                       bg=TEXT_SUB, fg="white", font=self.f_small, padx=8).pack(side="left")
 
+        # 关闭后操作选项（同时作用于手动关闭和定时关闭）
+        shutdown_opts = tk.Frame(c1, bg=CARD)
+        shutdown_opts.pack(fill="x", pady=(6, 0))
+        self.shutdown_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(shutdown_opts, text="🔌 关闭后关机", variable=self.shutdown_var,
+                       font=self.f_small, bg=CARD, fg=RED,
+                       selectcolor=CARD, activebackground=CARD).pack(side="left", padx=(0, 8))
+        self.restart_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(shutdown_opts, text="🔄 替代为重启", variable=self.restart_var,
+                       font=self.f_small, bg=CARD, fg=TEXT_SUB,
+                       selectcolor=CARD, activebackground=CARD).pack(side="left", padx=(0, 8))
+        tk.Label(shutdown_opts, text="（关闭模拟器后自动执行）", font=("Microsoft YaHei", 7),
+                 bg=CARD, fg=TEXT_LIGHT).pack(side="left")
+
         # 开机自启选项
         auto_f = tk.Frame(c1, bg=CARD)
         auto_f.pack(fill="x", pady=(4, 0))
@@ -1470,35 +1492,6 @@ class EmulatorShutdownApp:
                       bg=TEXT_SUB, fg="white", font=self.f_small, padx=8).pack(side="left")
 
         # ============================================================
-        # 卡片4：快速操作
-        # ============================================================
-        card3, c3 = make_card(main_frame, accent_color=RED)
-
-        tk.Label(c3, text="⚡ 快速操作", font=self.f_sec,
-                 bg=CARD, fg=TEXT).pack(anchor="w", pady=(0, 6))
-
-        # 操作按钮
-        op_row = tk.Frame(c3, bg=CARD)
-        op_row.pack(fill="x", pady=(0, 6))
-        RoundedButton(op_row, text="⏹ 关闭所有模拟器", command=self._on_kill_now,
-                      bg=RED, fg="white", font=self.f_body, padx=12).pack(side="left", padx=(0, 12))
-
-        # 关机设置
-        tk.Frame(c3, bg=BORDER, height=1).pack(fill="x", pady=(0, 6))
-        sf = tk.Frame(c3, bg=CARD)
-        sf.pack(fill="x")
-        self.shutdown_var = tk.BooleanVar(value=True)
-        tk.Checkbutton(sf, text="🔌 关闭后关机", variable=self.shutdown_var,
-                       font=self.f_body, bg=CARD, fg=RED,
-                       selectcolor=CARD, activebackground=CARD).pack(side="left", padx=(0, 12))
-        self.restart_var = tk.BooleanVar(value=False)
-        tk.Checkbutton(sf, text="🔄 替代为重启", variable=self.restart_var,
-                       font=self.f_small, bg=CARD, fg=TEXT_SUB,
-                       selectcolor=CARD, activebackground=CARD).pack(side="left")
-        tk.Label(sf, text="（关闭模拟器后自动执行）", font=("Microsoft YaHei", 7),
-                 bg=CARD, fg=TEXT_LIGHT).pack(side="left", padx=(8, 0))
-
-        # ============================================================
         # 底部栏
         # ============================================================
         bt = tk.Frame(main_frame, bg=BG)
@@ -1513,7 +1506,7 @@ class EmulatorShutdownApp:
         # 底栏 — 极简
         ft = tk.Frame(root, bg=BG, height=16)
         ft.pack(fill="x")
-        tk.Label(ft, text="Xiaomi Design · v4.2 · 环境检测 · 实例管理 · 定时任务 · 强制关机",
+        tk.Label(ft, text="Xiaomi Design · v4.2 · 环境检测 · 实例管理 · 定时任务 · 关机联动",
                  font=("Microsoft YaHei", 7), bg=BG, fg=TEXT_LIGHT).pack(expand=True)
 
     # ---------- 任务组件（完全保留原有逻辑） ----------
@@ -1669,15 +1662,14 @@ class EmulatorShutdownApp:
 
             should_shutdown = self.shutdown_var.get()
             def _on_done(count, success, fail_count, failed_names, _, __):
-                st_lbl.config(text=f"完成 {success}/{count}", fg=GREEN if fail_count == 0 else YELLOW)
-                if should_shutdown and success > 0:
-                    st_lbl.config(text=f"关机中…", fg=RED)
-                    self.root.update()
-                    time.sleep(0.5)
-                    _force_shutdown_windows(self.restart_var.get())
-                elif task["mode"] == "fixed":
-                    task["auto_reset_id"] = self.root.after(2000, lambda: self._auto_reset_task(task))
-                self._save_tasks_config()
+                def _ui():
+                    st_lbl.config(text=f"完成 {success}/{count}", fg=GREEN if fail_count == 0 else YELLOW)
+                    if should_shutdown and success > 0:
+                        st_lbl.config(text="关机中…", fg=RED)
+                    elif task["mode"] == "fixed":
+                        task["auto_reset_id"] = self.root.after(2000, lambda: self._auto_reset_task(task))
+                    self._save_tasks_config()
+                self.root.after(0, _ui)
             graceful_kill_async(on_done=_on_done, do_backup=True, do_shutdown=should_shutdown,
                                should_restart=self.restart_var.get(),
                                mumu_vms_dir=self._get_mumu_vms_dir())
@@ -1810,17 +1802,16 @@ class EmulatorShutdownApp:
 
         should_shutdown = self.shutdown_var.get()
         def _on_done(count, success, fail_count, failed_names, _, __):
-            t["vars"]["st_lbl"].config(
-                text=f"完成 {success}/{count}" if count > 0 else "无进程",
-                fg=GREEN if fail_count == 0 else YELLOW)
-            if should_shutdown and success > 0:
-                t["vars"]["st_lbl"].config(text="关机中…", fg=RED)
-                self.root.update()
-                time.sleep(0.5)
-                _force_shutdown_windows(self.restart_var.get())
-            elif t["mode"] == "fixed":
-                t["auto_reset_id"] = self.root.after(2000, lambda: self._auto_reset_task(t))
-            self._save_tasks_config()
+            def _ui():
+                t["vars"]["st_lbl"].config(
+                    text=f"完成 {success}/{count}" if count > 0 else "无进程",
+                    fg=GREEN if fail_count == 0 else YELLOW)
+                if should_shutdown and success > 0:
+                    t["vars"]["st_lbl"].config(text="关机中…", fg=RED)
+                elif t["mode"] == "fixed":
+                    t["auto_reset_id"] = self.root.after(2000, lambda: self._auto_reset_task(t))
+                self._save_tasks_config()
+            self.root.after(0, _ui)
         graceful_kill_async(on_done=_on_done, do_backup=True, do_shutdown=should_shutdown,
                            should_restart=self.restart_var.get(),
                            mumu_vms_dir=self._get_mumu_vms_dir())
@@ -2919,11 +2910,6 @@ class EmulatorShutdownApp:
         if not self._startup_launch_done:
             self.root.after(500, self._auto_launch_on_startup)
 
-    def _refresh_instances(self):
-        """刷新实例列表"""
-        self.ld_path_var.set("正在搜索...")
-        threading.Thread(target=self._auto_detect_thread, daemon=True).start()
-
     def _get_selected_instances(self):
         """获取勾选的实例名列表"""
         if not hasattr(self, '_inst_vars') or not self._inst_vars:
@@ -3458,7 +3444,8 @@ class EmulatorShutdownApp:
             import traceback
             err_msg = f"弹窗异常: {e}\n\n{traceback.format_exc()}"
             try:
-                with open(os.path.join(exe_dir, "_snapshot_error.log"), 'w', encoding='utf-8') as f:
+                log_dir = os.path.dirname(os.path.abspath(sys.executable)) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
+                with open(os.path.join(log_dir, "_snapshot_error.log"), 'w', encoding='utf-8') as f:
                     f.write(err_msg)
             except Exception:
                 pass
