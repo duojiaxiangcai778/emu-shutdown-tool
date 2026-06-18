@@ -1300,10 +1300,10 @@ def scan_mumu_instances(mumu_manager_path):
             pass
 
         # 尝试 C：临时 bat 文件 > stdout 重定向
+        out_file = os.path.join(tempfile.gettempdir(), f"_mumu_scan_{os.getpid()}.txt")
+        bat_path = os.path.join(tempfile.gettempdir(), f"_mumu_scan_{os.getpid()}.bat")
         try:
-            out_file = os.path.join(tempfile.gettempdir(), f"_mumu_scan_{os.getpid()}.txt")
             bat_content = f'@echo off\r\n"{mumu_manager_path}" info --vmindex all > "{out_file}"\r\n'
-            bat_path = os.path.join(tempfile.gettempdir(), f"_mumu_scan_{os.getpid()}.bat")
             with open(bat_path, 'w', encoding='utf-8') as f:
                 f.write(bat_content)
             subprocess.run([bat_path], timeout=30, cwd=mgr_dir,
@@ -1311,18 +1311,19 @@ def scan_mumu_instances(mumu_manager_path):
             if os.path.isfile(out_file):
                 with open(out_file, 'r', encoding='utf-8') as f:
                     raw = f.read().strip()
-                try:
-                    os.unlink(bat_path)
-                except Exception:
-                    pass
-                try:
-                    os.unlink(out_file)
-                except Exception:
-                    pass
                 if raw:
                     return json.loads(raw)
         except Exception:
             pass
+        finally:
+            try:
+                if os.path.isfile(bat_path): os.unlink(bat_path)
+            except Exception:
+                pass
+            try:
+                if os.path.isfile(out_file): os.unlink(out_file)
+            except Exception:
+                pass
 
         return None
 

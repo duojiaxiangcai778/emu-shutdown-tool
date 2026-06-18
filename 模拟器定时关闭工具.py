@@ -1735,11 +1735,6 @@ class EmulatorShutdownApp:
         if fn:
             fn()
 
-    def _renumber(self, tasks_list):
-        for i, t in enumerate(tasks_list):
-            if "set_idx" in t:
-                t["set_idx"](i + 1)
-
     # ---------- 任务管理 ----------
 
     def _add_task(self, task_type, data=None):
@@ -2046,7 +2041,10 @@ class EmulatorShutdownApp:
             task["auto_reset_id"] = None
             if not task["enabled"]:
                 return
-            h, m = int(h_spin.get()), int(m_spin.get())
+            try:
+                h, m = int(h_spin.get()), int(m_spin.get())
+            except (ValueError, TypeError):
+                return
             target = datetime.now().replace(hour=h, minute=m, second=0, microsecond=0) + timedelta(days=1)
             task["target_ts"] = target.timestamp()
             task["running"] = True
@@ -2289,7 +2287,10 @@ class EmulatorShutdownApp:
         t["auto_reset_id"] = None
         if not t["enabled"]:
             return
-        h, m = int(t["vars"]["h_spin"].get()), int(t["vars"]["m_spin"].get())
+        try:
+            h, m = int(t["vars"]["h_spin"].get()), int(t["vars"]["m_spin"].get())
+        except (ValueError, TypeError):
+            return
         target = datetime.now().replace(hour=h, minute=m, second=0, microsecond=0) + timedelta(days=1)
         t["target_ts"] = target.timestamp()
         t["running"] = True
@@ -2342,6 +2343,11 @@ class EmulatorShutdownApp:
             action_text = "并重启"
 
         # 直接执行，不再弹确认框
+        if self._shutdown_running:
+            self._kill_status_var.set("关闭中，请勿重复点击")
+            return
+        self._shutdown_running = True
+
         graceful_kill_async(
             on_done=lambda count, success, fail_count, failed_names, backup_msg, shutdown_executed: self.root.after(0, lambda: self._on_kill_done(
                 count, success, fail_count, failed_names, backup_msg, shutdown_executed)),
@@ -2353,6 +2359,7 @@ class EmulatorShutdownApp:
 
     def _on_kill_done(self, count, success, fail_count, failed_names, backup_msg, shutdown_executed):
         """关闭模拟器完成后的回调"""
+        self._shutdown_running = False
         if count == 0:
             return
         msg = f"已关闭 {success}/{count} 个模拟器"
@@ -2361,10 +2368,6 @@ class EmulatorShutdownApp:
         if backup_msg:
             msg += f"\n{backup_msg}"
         self._kill_status_var.set(msg)
-
-    def _add_progress_window(self):
-        """添加进度窗口 - 在 _build_ui 中调用"""
-        pass
 
     def _on_auto_start_toggle(self):
         enable = self.auto_start_var.get()
