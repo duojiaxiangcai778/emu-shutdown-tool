@@ -1635,7 +1635,7 @@ class EmulatorShutdownApp:
             for k in ("update_id", "auto_reset_id"):
                 if task.get(k):
                     try: self.root.after_cancel(task[k])
-                    except: pass
+                    except Exception: pass
                     task[k] = None
             task["thread"] = None
             act_btn.config_bg(color); act_btn.set_text("▶")
@@ -1678,7 +1678,10 @@ class EmulatorShutdownApp:
             task["auto_reset_id"] = None
             if not task["enabled"]:
                 return
-            h, m = int(h_spin.get()), int(m_spin.get())
+            try:
+                h, m = int(h_spin.get()), int(m_spin.get())
+            except (ValueError, TypeError):
+                return
             target = datetime.now().replace(hour=h, minute=m, second=0, microsecond=0) + timedelta(days=1)
             task["target_ts"] = target.timestamp()
             task["running"] = True
@@ -1830,7 +1833,7 @@ class EmulatorShutdownApp:
         for t in self.shutdown_tasks:
             if t.get("auto_reset_id"):
                 try: self.root.after_cancel(t["auto_reset_id"])
-                except: pass
+                except Exception: pass
                 t["auto_reset_id"] = None
             if t["running"]:
                 t["running"] = False
@@ -1987,7 +1990,7 @@ class EmulatorShutdownApp:
             for k in ("update_id", "auto_reset_id"):
                 if task.get(k):
                     try: self.root.after_cancel(task[k])
-                    except: pass
+                    except Exception: pass
                     task[k] = None
             task["thread"] = None
             act_btn.config_bg(color); act_btn.set_text("▶")
@@ -2321,7 +2324,7 @@ class EmulatorShutdownApp:
         for t in self.launch_tasks:
             if t.get("auto_reset_id"):
                 try: self.root.after_cancel(t["auto_reset_id"])
-                except: pass
+                except Exception: pass
                 t["auto_reset_id"] = None
             if t["running"]:
                 t["running"] = False
@@ -3616,7 +3619,7 @@ class EmulatorShutdownApp:
             t["running"] = False
         if self.scan_timer_id:
             try: self.root.after_cancel(self.scan_timer_id)
-            except: pass
+            except Exception: pass
             self.scan_timer_id = None
         self.root.destroy()
 
