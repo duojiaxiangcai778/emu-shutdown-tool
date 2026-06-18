@@ -3365,35 +3365,7 @@ class EmulatorShutdownApp:
                 pass
 
         # ==== 扫描 ====
-        exe_dir = os.path.dirname(os.path.abspath(sys.executable)) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
-        scan_paths = set()
-        scan_paths.add(os.path.normpath(os.path.join(exe_dir, '快照')))
-        scan_paths.add(os.path.normpath(os.path.join(os.getcwd(), '快照')))
-
-        all_snapshots = []
-        seen = set()
-        for d in scan_paths:
-            if not os.path.isdir(d):
-                continue
-            for name in sorted(os.listdir(d), reverse=True):
-                snap_dir = os.path.join(d, name)
-                if not os.path.isdir(snap_dir) or name in seen:
-                    continue
-                seen.add(name)
-                meta_path = os.path.join(snap_dir, 'snapshot_meta.json')
-                meta = {}
-                if os.path.isfile(meta_path):
-                    try:
-                        with open(meta_path, 'r', encoding='utf-8') as f:
-                            meta = json.load(f)
-                    except Exception:
-                        pass
-                all_snapshots.append({
-                    "name": name,
-                    "path": snap_dir,
-                    "instance_count": meta.get("instance_count", 0),
-                    "timestamp": meta.get("timestamp", name),
-                })
+        all_snapshots = list_snapshots(SNAPSHOT_DIR)
 
         if not all_snapshots:
             messagebox.showinfo("快照列表", "暂无手动快照\n请在调整好实例后点击「保存快照」创建")
