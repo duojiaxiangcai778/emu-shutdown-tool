@@ -468,6 +468,7 @@ def save_snapshot(vms_config_dir, multiplayer_config_dir, snapshot_base_dir, mum
 
     timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
     snap_dir = os.path.join(snapshot_base_dir, timestamp)
+    _log_error(f"[SNAP] save_snapshot 开始: vms_config_dir={vms_config_dir}, mumu_vms_dir={mumu_vms_dir}")
     try:
         os.makedirs(snap_dir, exist_ok=True)
 
@@ -478,6 +479,9 @@ def save_snapshot(vms_config_dir, multiplayer_config_dir, snapshot_base_dir, mum
                 src = os.path.join(vms_config_dir, fname)
                 shutil.copy2(src, os.path.join(snap_dir, fname))
                 count += 1
+        _log_error(f"[SNAP] LDPlayer config 文件找到 {count} 个")
+        if count == 0:
+            _log_error(f"[SNAP] vms_config_dir 内容: {os.listdir(vms_config_dir)}")
 
         # 复制全局配置（多开器的 leidians.config）
         if multiplayer_config_dir and os.path.isdir(multiplayer_config_dir):
@@ -598,9 +602,11 @@ def list_snapshots(snapshot_base_dir):
                         meta = json.load(f)
                 except Exception:
                     pass
-            ld_cnt = meta.get("ldplayer_count") or meta.get("instance_count") or 0
+            ld_cnt = meta.get("ldplayer_count")
+            if ld_cnt is None:
+                ld_cnt = meta.get("instance_count", 0)
             mm_cnt = meta.get("mumu_count", 0)
-            total = ld_cnt + mm_cnt
+            total = int(ld_cnt or 0) + int(mm_cnt or 0)
             snapshots.append({
                 "name": name,
                 "path": snap_dir,
