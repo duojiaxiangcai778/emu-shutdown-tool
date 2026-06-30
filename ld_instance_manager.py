@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import winreg
 import ctypes
+import tempfile
 from datetime import datetime
 from pathlib import Path
 
@@ -183,17 +184,21 @@ def _find_ld_from_registry():
     for hkey, subkey in reg_paths:
         try:
             key = winreg.OpenKey(hkey, subkey, 0, winreg.KEY_READ)
+        except Exception:
+            continue
+        try:
             for val_name in ['InstallPath', 'Path', 'InstallDir', '']:
                 try:
                     val, _ = winreg.QueryValueEx(key, val_name)
                     if val and os.path.isdir(val) and os.path.isfile(os.path.join(val, 'dnconsole.exe')):
-                        winreg.CloseKey(key)
                         return val
                 except FileNotFoundError:
                     continue
-            winreg.CloseKey(key)
-        except Exception:
-            continue
+        finally:
+            try:
+                winreg.CloseKey(key)
+            except Exception:
+                pass
     return None
 
 
@@ -405,10 +410,13 @@ def check_running_instances(instances, dnconsole_path=None):
             capture_output=True, text=True, timeout=10,
             creationflags=subprocess.CREATE_NO_WINDOW
         )
+        import re
         for line in r.stdout.splitlines():
             for inst in instances:
-                if inst['name'] in line:
-                    running_names.add(inst['name'])
+                name = inst['name']
+                # 使用单词边界匹配，避免 "leidian1" 误匹配 "leidian10"
+                if re.search(r'(?<![a-zA-Z0-9])' + re.escape(name) + r'(?![a-zA-Z0-9])', line):
+                    running_names.add(name)
     except Exception:
         pass
 
@@ -606,7 +614,10 @@ def list_snapshots(snapshot_base_dir):
             if ld_cnt is None:
                 ld_cnt = meta.get("instance_count", 0)
             mm_cnt = meta.get("mumu_count", 0)
-            total = int(ld_cnt or 0) + int(mm_cnt or 0)
+            try:
+                total = int(ld_cnt or 0) + int(mm_cnt or 0)
+            except (ValueError, TypeError):
+                total = 0
             snapshots.append({
                 "name": name,
                 "path": snap_dir,
@@ -668,6 +679,7 @@ def launch_instance(dnconsole_path, instance_name, timeout=30):
     shell32.ShellExecuteW.restype = ctypes.c_void_p
 
     directory = os.path.dirname(dnconsole_path)
+    err_code = 0
 
     # 尝试方式1: ShellExecuteW (runas 提权)
     try:
@@ -1258,7 +1270,6 @@ def scan_mumu_instances(mumu_manager_path):
     搜索多个可能的 vms 位置，确保不同安装方式都能找到。
     返回: [{"index": "0", "name": "...", "running": bool, "hyperv": bool}, ...]
     """
-    import json, tempfile
     if not mumu_manager_path or not os.path.isfile(mumu_manager_path):
         return []
 
@@ -1271,7 +1282,6 @@ def scan_mumu_instances(mumu_manager_path):
     # 试多种方式：直调、cmd /c、临时 bat，哪种能出数据就用哪种。
     def _try_mumumanager():
         """尝试用 MuMuManager 获取实例列表"""
-        attempts = []
         env = os.environ.copy()
         env["PATH"] = mgr_dir + os.pathsep + env.get("PATH", "")
 
@@ -1343,7 +1353,7 @@ def scan_mumu_instances(mumu_manager_path):
                     "memory": "?",
                     "root": False,
                 })
-            instances.sort(key=lambda x: int(x["index"]))
+            instances.sort(key=lambda x: int(x["index"]) if str(x["index"]).isdigit() else 0)
             # 补充 vm_config.json 里的 CPU/内存/Root
             for inst in instances:
                 for dir_candidate in [os.path.join(install_dir, "vms"),
@@ -1482,28 +1492,46 @@ def _auto_detect_mumu_path():
 # 桌面快捷方式检测（最快路径）
 # ============================================================
 
-def _resolve_lnk_target(lnk_path):
-    """解析 .lnk 快捷方式的 TargetPath
-    用 PowerShell 读取，返回目标路径或 None
+def _resolve_lnk_targets_batch(lnk_paths):
+    """批量解析 .lnk 快捷方式的 TargetPath（单次 PowerShell 调用）
+    返回: {lnk_path: target_path, ...}
     """
+    if not lnk_paths:
+        return {}
+    results = {}
+    # 将路径列表转为 PowerShell 数组
+    items = "; ".join(f"'{p}'" for p in lnk_paths)
+    cmd = (
+        "$s = New-Object -ComObject WScript.Shell; "
+        f"$paths = @({items}); "
+        "foreach ($p in $paths) { try { $sc = $s.CreateShortcut($p); "
+        "if ($sc.TargetPath) { Write-Output ($p + '|' + $sc.TargetPath) } } catch {} }"
+    )
     try:
-        cmd = (
-            "$s = New-Object -ComObject WScript.Shell; "
-            f"$sc = $s.CreateShortcut('{lnk_path}'); "
-            "Write-Output $sc.TargetPath"
-        )
         r = subprocess.run(
             ["powershell", "-NoProfile", "-Command", cmd],
-            capture_output=True, text=True, timeout=8,
+            capture_output=True, text=True, timeout=15,
             creationflags=subprocess.CREATE_NO_WINDOW
         )
         if r.returncode == 0:
-            target = r.stdout.strip()
-            if target and os.path.isfile(target):
-                return target
+            for line in r.stdout.strip().splitlines():
+                if '|' in line:
+                    lnk, target = line.split('|', 1)
+                    lnk = lnk.strip()
+                    target = target.strip()
+                    if target:
+                        results[lnk] = target
     except Exception:
         pass
-    return None
+    return results
+
+
+_LD_KEYWORDS = ["dnplayer", "dnconsole", "ldplayer", "leidian", "雷电"]
+_MUMU_KEYWORDS = ["mumumanager", "mumuplayer", "mumu player", "mumu模拟器", "网易", "mumu"]
+_LNK_NAME_KEYWORDS = [
+    "ldplayer", "leidian", "雷电", "mumu", "dnplayer", "dnconsole",
+    "模拟器", "emulator",
+]
 
 
 def find_emulator_from_shortcuts():
@@ -1512,17 +1540,13 @@ def find_emulator_from_shortcuts():
     """
     result = {"ld_path": None, "mumu_manager": None}
 
-    # 搜索目录
     scan_dirs = set()
-    # 用户桌面
     user_desktop = os.path.expandvars(r"%USERPROFILE%\Desktop")
     if os.path.isdir(user_desktop):
         scan_dirs.add(user_desktop)
-    # 公共桌面
     public_desktop = os.path.expandvars(r"%PUBLIC%\Desktop")
     if os.path.isdir(public_desktop):
         scan_dirs.add(public_desktop)
-    # 开始菜单
     start_menu = os.path.expandvars(r"%APPDATA%\Microsoft\Windows\Start Menu")
     if os.path.isdir(start_menu):
         scan_dirs.add(start_menu)
@@ -1530,52 +1554,48 @@ def find_emulator_from_shortcuts():
     if os.path.isdir(common_start):
         scan_dirs.add(common_start)
 
+    candidate_lnks = []
     for scan_dir in scan_dirs:
         for root, dirs, files in os.walk(scan_dir):
             for fname in files:
                 if not fname.lower().endswith(".lnk"):
                     continue
-                lnk = os.path.join(root, fname)
-                target = _resolve_lnk_target(lnk)
-                if not target:
-                    continue
-                lower = target.lower()
-                # LDPlayer 匹配
-                if not result["ld_path"]:
-                    if any(kw in lower for kw in ["dnplayer", "dnconsole", "ldplayer", "leidian"]):
+                fname_lower = fname.lower()
+                if any(kw in fname_lower for kw in _LNK_NAME_KEYWORDS):
+                    candidate_lnks.append(os.path.join(root, fname))
+
+    if candidate_lnks:
+        targets = _resolve_lnk_targets_batch(candidate_lnks)
+        for lnk_path, target in targets.items():
+            lower = target.lower()
+            if not result["ld_path"]:
+                if any(kw in lower for kw in _LD_KEYWORDS):
+                    parent = os.path.dirname(target)
+                    if os.path.isfile(os.path.join(parent, "dnconsole.exe")):
+                        result["ld_path"] = parent
+            if not result["mumu_manager"]:
+                if "mumumanager" in lower:
+                    if os.path.isfile(target) and "MuMuManager" in target:
+                        result["mumu_manager"] = target
+                    else:
                         parent = os.path.dirname(target)
-                        # 如果是 exe，取 exe 所在目录
-                        if os.path.isfile(os.path.join(parent, "dnconsole.exe")):
-                            result["ld_path"] = parent
-                        else:
-                            # 可能点的是 exe 本身
-                            result["ld_path"] = parent
-                # MuMu 匹配
-                if not result["mumu_manager"]:
-                    if "mumumanager" in lower:
-                        if os.path.isfile(target) and "MuMuManager" in target:
-                            result["mumu_manager"] = target
-                        else:
-                            # 可能是 MuMu Player 启动器，找附近的 MuMuManager
-                            parent = os.path.dirname(target)
-                            mgr = os.path.join(parent, "MuMuManager.exe")
-                            if os.path.isfile(mgr):
-                                result["mumu_manager"] = mgr
-                            # 也可能是 nx_main 目录
-                            nx_mgr = os.path.join(parent, "nx_main", "MuMuManager.exe")
-                            if os.path.isfile(nx_mgr):
-                                result["mumu_manager"] = nx_mgr
-                    elif any(kw in lower for kw in ["mumuplayer", "mumu player", "mumu模拟器", "网易"]):
-                        parent = os.path.dirname(target)
-                        for try_path in [
-                            os.path.join(parent, "MuMuManager.exe"),
-                            os.path.join(parent, "nx_main", "MuMuManager.exe"),
-                        ]:
-                            if os.path.isfile(try_path):
-                                result["mumu_manager"] = try_path
-                                break
-                if result["ld_path"] and result["mumu_manager"]:
-                    return result
+                        mgr = os.path.join(parent, "MuMuManager.exe")
+                        if os.path.isfile(mgr):
+                            result["mumu_manager"] = mgr
+                        nx_mgr = os.path.join(parent, "nx_main", "MuMuManager.exe")
+                        if os.path.isfile(nx_mgr):
+                            result["mumu_manager"] = nx_mgr
+                elif any(kw in lower for kw in _MUMU_KEYWORDS):
+                    parent = os.path.dirname(target)
+                    for try_path in [
+                        os.path.join(parent, "MuMuManager.exe"),
+                        os.path.join(parent, "nx_main", "MuMuManager.exe"),
+                    ]:
+                        if os.path.isfile(try_path):
+                            result["mumu_manager"] = try_path
+                            break
+            if result["ld_path"] and result["mumu_manager"]:
+                return result
 
     return result
 
