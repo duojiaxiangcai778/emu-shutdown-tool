@@ -1043,7 +1043,16 @@ def _lighten_color(hex_color, factor=0.15):
 class RoundedButton(tk.Frame):
     """自绘按钮（Frame + Label，带字体缓存和悬停效果）"""
 
-    _font_cache = {}
+    _font_cache = {}     # cache_key -> (linespace,)
+    _shared_fonts = {}   # cache_key -> tkinter Font object (persistent)
+    _text_width_cache = {}  # (cache_key, text) -> pixel width
+
+    @classmethod
+    def _get_shared_font(cls, font_spec):
+        cache_key = str(font_spec)
+        if cache_key not in cls._shared_fonts:
+            cls._shared_fonts[cache_key] = Font(font=font_spec)
+        return cls._shared_fonts[cache_key]
 
     def __init__(self, parent, text, command=None, bg=MI_ORANGE, fg="white",
                  font=None, padx=16, pady=6, hover_bg=None, **kwargs):
@@ -1055,22 +1064,24 @@ class RoundedButton(tk.Frame):
         self._font = font or ("Microsoft YaHei", 10)
 
         cache_key = str(self._font)
+        # 缓存行高（只需一次 Font 查询）
         if cache_key not in self._font_cache:
             try:
-                _f = Font(font=self._font)
-                tw = _f.measure("A" * max(len(text), 10))
-                th = _f.metrics("linespace")
-                _f.destroy()
-                self._font_cache[cache_key] = (tw, th)
+                _f = self._get_shared_font(self._font)
+                self._font_cache[cache_key] = (_f.metrics("linespace"),)
             except Exception:
-                self._font_cache[cache_key] = (60, 20)
-        tw, th = self._font_cache[cache_key]
-        try:
-            _f = Font(font=self._font)
-            tw = _f.measure(text)
-            _f.destroy()
-        except Exception:
-            pass
+                self._font_cache[cache_key] = (20,)
+        th = self._font_cache[cache_key][0]
+
+        # 缓存按钮文本像素宽度（避免重复创建 Font）
+        tw_cache_key = (cache_key, text)
+        if tw_cache_key not in self._text_width_cache:
+            try:
+                _f = self._get_shared_font(self._font)
+                self._text_width_cache[tw_cache_key] = _f.measure(text)
+            except Exception:
+                self._text_width_cache[tw_cache_key] = 60
+        tw = self._text_width_cache[tw_cache_key]
 
         w = tw + padx * 2 + 10
         h = th + pady * 2 + 6
@@ -1914,12 +1925,14 @@ class EmulatorShutdownApp:
                     on_status=lambda s: self.root.after(0, lambda: t["vars"]["st_lbl"].config(text=s[:30], fg=YELLOW)),
                 )
                 ok = sum(1 for _, s, _ in results if s)
-                self.root.after(0, lambda: t["vars"]["st_lbl"].config(
-                    text=f"完成 {ok}/{len(results)}", fg=GREEN if ok == len(results) else YELLOW))
-                self.root.after(0, self._scan_and_display_instances)
-                if t["mode"] == "fixed":
-                    t["auto_reset_id"] = self.root.after(2000, lambda: self._autoreset_launch(t))
-                self._save_tasks_config()
+                def _ui():
+                    t["vars"]["st_lbl"].config(
+                        text=f"完成 {ok}/{len(results)}", fg=GREEN if ok == len(results) else YELLOW)
+                    self._scan_and_display_instances()
+                    if t["mode"] == "fixed":
+                        t["auto_reset_id"] = self.root.after(2000, lambda: self._autoreset_launch(t))
+                    self._save_tasks_config()
+                self.root.after(0, _ui)
 
             threading.Thread(target=_work, daemon=True).start()
 
@@ -2086,7 +2099,8 @@ class EmulatorShutdownApp:
     # ---------- 立即关闭（原有按钮，使用优雅关闭） ----------
 
     def _on_kill_now(self):
-        if not self._emu_procs_cache:
+        procs = list(self._emu_procs_cache)
+        if not procs:
             messagebox.showinfo("提示", "未检测到模拟器进程。")
             return
 
@@ -3607,7 +3621,6 @@ _single_instance_mutex = None
 def ensure_single_instance():
     global _single_instance_mutex
     try:
-        kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
         _single_instance_mutex = kernel32.CreateMutexW(None, False, SINGLE_INSTANCE_MUTEX_NAME)
         if not _single_instance_mutex:
             return True
@@ -3626,15 +3639,17 @@ def main():
             sys.exit(0)
 
         if psutil is None and not getattr(sys, 'frozen', False):
-            try:
-                subprocess.run(
-                    [sys.executable, "-m", "pip", "install", "psutil", "-q"],
-                    timeout=30, creationflags=subprocess.CREATE_NO_WINDOW
-                )
-                import psutil as psutil_module
-                globals()['psutil'] = psutil_module
-            except Exception:
-                pass
+            def _install_psutil():
+                try:
+                    subprocess.run(
+                        [sys.executable, "-m", "pip", "install", "psutil", "-q"],
+                        timeout=30, creationflags=subprocess.CREATE_NO_WINDOW
+                    )
+                    import psutil as psutil_module
+                    globals()['psutil'] = psutil_module
+                except Exception:
+                    pass
+            threading.Thread(target=_install_psutil, daemon=True).start()
 
         root = tk.Tk()
         # 先设背景色再隐藏，避免白屏闪烁

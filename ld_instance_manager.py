@@ -1647,6 +1647,7 @@ def wait_mumu_ready(mumu_manager_path, index, timeout=180, check_interval=5):
     adb = _find_adb_path()
     elapsed = 0.0
     stage = "process_not_found"
+    import re
 
     while elapsed < timeout:
         time.sleep(check_interval)
@@ -1662,7 +1663,6 @@ def wait_mumu_ready(mumu_manager_path, index, timeout=180, check_interval=5):
                 capture_output=True, text=True, timeout=10,
                 creationflags=subprocess.CREATE_NO_WINDOW,
             )
-            import re
             idx_str = str(index)
             for line in r.stdout.splitlines():
                 if re.search(r'(?<![a-zA-Z0-9])' + re.escape(idx_str) + r'(?![a-zA-Z0-9])', line):
