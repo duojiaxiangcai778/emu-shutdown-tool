@@ -1972,12 +1972,16 @@ class EmulatorShutdownApp:
         ui["act_btn"].config(command=_toggle)
         task["vars"] = ui
 
-        # 实例选择按钮（启动任务特有）
+        # 实例选择按钮（先创建，再调整打包顺序使它在状态标签之前）
         inst_btn = RoundedButton(ui["row"], text=f"选择实例 ({len(inst_names)})",
                                  command=lambda: self._pick_instances(task, inst_btn),
                                  bg=GREEN, fg="white", font=self.f_small,
                                  padx=6, pady=1)
+        # 把 st_lbl 拆掉重包到 inst_btn 之后，让 inst_btn 显示在 st_lbl 前面
+        st_lbl = ui["st_lbl"]
+        st_lbl.pack_forget()
         inst_btn.pack(side="left", padx=(4, 0))
+        st_lbl.pack(side="left", padx=(6, 0))
         task["vars"]["inst_btn"] = inst_btn
 
         return task
