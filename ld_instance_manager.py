@@ -144,31 +144,29 @@ def _find_multiplayer_from_pathconfig():
     """从 pathconfig.ini 获取多开器路径"""
     for base in _get_all_drives():
         for name in ['ldmutiplayer', 'LDPlayer', 'ldplayer']:
-            for sub in ['', name]:
-                pf = os.path.join(base, name, sub, 'pathconfig.ini') if sub else os.path.join(base, name, 'pathconfig.ini')
-                pf = os.path.normpath(pf)
-                if os.path.isfile(pf):
-                    try:
-                        with open(pf, 'r', encoding='utf-8') as f:
-                            content = f.read()
-                        for line in content.splitlines():
-                            if line.startswith('player9='):
-                                val = line.split('=', 1)[1].strip()
-                                if os.path.isdir(val):
-                                    # 多开器目录是 pathconfig.ini 所在目录
-                                    mp_dir = os.path.dirname(pf)
-                                    # 但 pathconfig.ini 可能在多开器子目录
-                                    # 检查当前目录是否有多开器
-                                    if os.path.isfile(os.path.join(mp_dir, 'dnmultiplayerex.exe')):
-                                        return mp_dir
-                                    # 检查上一级
-                                    parent = os.path.dirname(mp_dir)
-                                    if os.path.isfile(os.path.join(parent, 'dnmultiplayerex.exe')):
-                                        return parent
-                                    # 直接返回 LDPlayer 路径（多开器可能在同一个目录）
-                                    return val
-                    except Exception:
-                        continue
+            pf = os.path.normpath(os.path.join(base, name, 'pathconfig.ini'))
+            if os.path.isfile(pf):
+                try:
+                    with open(pf, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                    for line in content.splitlines():
+                        if line.startswith('player9='):
+                            val = line.split('=', 1)[1].strip()
+                            if os.path.isdir(val):
+                                # 多开器目录是 pathconfig.ini 所在目录
+                                mp_dir = os.path.dirname(pf)
+                                # 但 pathconfig.ini 可能在多开器子目录
+                                # 检查当前目录是否有多开器
+                                if os.path.isfile(os.path.join(mp_dir, 'dnmultiplayerex.exe')):
+                                    return mp_dir
+                                # 检查上一级
+                                parent = os.path.dirname(mp_dir)
+                                if os.path.isfile(os.path.join(parent, 'dnmultiplayerex.exe')):
+                                    return parent
+                                # 直接返回 LDPlayer 路径（多开器可能在同一个目录）
+                                return val
+                except Exception:
+                    continue
     return None
 
 
@@ -211,12 +209,10 @@ def _scan_common_paths():
             candidates.append(os.path.join(drive, name))
             candidates.append(os.path.join(drive, 'Program Files', name))
             candidates.append(os.path.join(drive, 'Program Files (x86)', name))
-            candidates.append(os.path.join(drive, 'E', name))
             candidates.append(os.path.join(drive, 'Software', name))
             # 多开器同目录
             for mp in ['ldmutiplayer', 'LDPlayer', 'ldplayer']:
                 candidates.append(os.path.join(drive, mp))
-                candidates.append(os.path.join(drive, 'E', mp))
 
     for path in candidates:
         path = os.path.normpath(path)
@@ -349,10 +345,6 @@ def _scan_instance_dirs(vms_dir, instances):
     except Exception:
         pass
 
-    # 按编号排序
-    instances.sort(key=lambda x: x['name'])
-    return instances
-
 
 def check_running_instances(instances, dnconsole_path=None):
     """检查哪些实例正在运行
@@ -403,7 +395,6 @@ def check_running_instances(instances, dnconsole_path=None):
             pass
 
     # 回退方式: wmic 通过命令行检测
-    import re
     try:
         r = subprocess.run(
             ['wmic', 'process', 'where',
@@ -978,6 +969,8 @@ def check_ldplayer_hyperv_version():
         return {"version": "standard", "detail": "标准版（基于 VirtualBox，与 Hyper-V 冲突）"}
     elif has_hyperv_dll:
         return {"version": "hyperv", "detail": "Hyper-V 兼容版"}
+    elif has_vbox and not has_vbox_dll:
+        return {"version": "unknown", "detail": "vbox64 目录存在但 VBoxRT.dll 缺失，版本未知"}
     else:
         # 进一步检查配置文件
         ld_config = os.path.join(found_dir, "ld_config.ini")
@@ -1292,6 +1285,7 @@ def scan_mumu_instances(mumu_manager_path):
             r = subprocess.run(
                 [mumu_manager_path, "info", "--vmindex", "all"],
                 capture_output=True, timeout=10, cwd=mgr_dir, env=env,
+                creationflags=subprocess.CREATE_NO_WINDOW,
             )
             raw = (r.stdout or b"").decode('utf-8', errors='replace').strip()
             if raw:
@@ -1304,6 +1298,7 @@ def scan_mumu_instances(mumu_manager_path):
             r = subprocess.run(
                 ["cmd.exe", "/c", f'"{mumu_manager_path}" info --vmindex all'],
                 capture_output=True, timeout=15, cwd=mgr_dir,
+                creationflags=subprocess.CREATE_NO_WINDOW,
             )
             raw = (r.stdout or b"").decode('utf-8', errors='replace').strip()
             if raw:
@@ -1647,7 +1642,6 @@ def wait_mumu_ready(mumu_manager_path, index, timeout=180, check_interval=5):
     adb = _find_adb_path()
     elapsed = 0.0
     stage = "process_not_found"
-    import re
 
     while elapsed < timeout:
         time.sleep(check_interval)
@@ -1805,11 +1799,11 @@ def _resolve_lnk_targets_batch(lnk_paths):
     if not lnk_paths:
         return {}
     results = {}
-    # 将路径列表转为 PowerShell 数组
-    items = "; ".join(f"'{p}'" for p in lnk_paths)
+    # 用 JSON 安全传递路径列表，避免单引号注入
+    paths_json = json.dumps(lnk_paths, ensure_ascii=False)
     cmd = (
         "$s = New-Object -ComObject WScript.Shell; "
-        f"$paths = @({items}); "
+        f"$paths = {paths_json} | ConvertFrom-Json; "
         "foreach ($p in $paths) { try { $sc = $s.CreateShortcut($p); "
         "if ($sc.TargetPath) { Write-Output ($p + '|' + $sc.TargetPath) } } catch {} }"
     )

@@ -18,6 +18,7 @@ import subprocess
 import winreg
 import ctypes
 import shutil
+import re
 from datetime import datetime, timedelta
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
@@ -29,25 +30,18 @@ except ImportError:
     psutil = None
 
 from ld_instance_manager import (
-    auto_detect_paths, scan_instances, check_running_instances,
-    read_instance_config, write_instance_config, get_instance_summary,
+    scan_instances, check_running_instances,
+    write_instance_config, get_instance_summary,
     save_snapshot, restore_snapshot, list_snapshots,
     launch_instance, staggered_launch,
     load_tool_config, save_tool_config,
-    get_saved_paths, save_paths,
-    TOOL_CONFIG_FILE, SNAPSHOT_DIR,
-    # 环境检测模块
+    SNAPSHOT_DIR,
     get_emulator_environment_report,
-    check_windows_feature,
     apply_all_fixes,
-    apply_fix_disable_feature,
-    FEATURE_HYPERV_ALL, FEATURE_HYPERV_PLATFORM, FEATURE_VMP,
-    FEATURE_LABELS,
-    # MuMu 模块
     auto_detect_mumu, scan_mumu_instances,
-    launch_mumu_instance, shutdown_mumu_instance,
+    shutdown_mumu_instance,
     launch_mumu_with_health_check,
-    start_mumu_health_monitor, stop_mumu_health_monitor,
+    stop_mumu_health_monitor,
     find_emulator_from_shortcuts,
 )
 
@@ -97,13 +91,11 @@ EWX_SHUTDOWN   = 0x00000001
 EWX_REBOOT     = 0x00000002
 EWX_FORCE      = 0x00000004
 EWX_POWEROFF   = 0x00000008
-EWX_FORCEIFHUNG = 0x00000010
 
 SHUTDOWN_FORCE_OTHERS = 0x00000001
 SHUTDOWN_FORCE_SELF   = 0x00000002
 SHUTDOWN_RESTART      = 0x00000004
 SHUTDOWN_POWEROFF     = 0x00000008
-SHUTDOWN_HYBRID       = 0x00000200
 
 # 特权常量
 SE_SHUTDOWN_NAME = "SeShutdownPrivilege"
@@ -116,7 +108,7 @@ kernel32 = ctypes.windll.kernel32
 advapi32 = ctypes.windll.advapi32
 ntdll = ctypes.windll.ntdll
 
-WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
+WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
 
 
 class LUID(ctypes.Structure):
@@ -222,12 +214,19 @@ def _force_shutdown_windows(should_restart):
 
     # ----- 方法4: wmic os call -----
     try:
-        cmd = 'shutdown' if not should_restart else 'reboot'
-        subprocess.run(
-            ['wmic', 'os', 'where', 'Primary=True', 'call', cmd],
-            capture_output=True, timeout=15,
-            creationflags=subprocess.CREATE_NO_WINDOW
-        )
+        if should_restart:
+            # wmic os call reboot 无效，回退到 shutdown /r
+            subprocess.run(
+                ['shutdown', '/r', '/t', '0', '/f'],
+                capture_output=True, timeout=15,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+        else:
+            subprocess.run(
+                ['wmic', 'os', 'where', 'Primary=True', 'call', 'Shutdown'],
+                capture_output=True, timeout=15,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
         time.sleep(3)
         return True
     except Exception:
@@ -288,21 +287,11 @@ BG_LIGHT    = "#363650"   # 浅色背景（输入框等）
 # 扩展色
 ORANGE_LIGHT  = "#818CF8"
 ORANGE_DARK   = "#4F46E5"
-ORANGE_BG     = "#2B2B3D"  # 同卡片背景
 
 # 兼容旧变量名
 MI_ORANGE     = PRIMARY
 MI_ORANGE_LT  = ORANGE_LIGHT
 MI_ORANGE_DK  = ORANGE_DARK
-MI_BG         = BG
-MI_CARD       = CARD
-MI_TEXT       = TEXT
-MI_TEXT_SUB   = TEXT_SUB
-MI_TEXT_LIGHT = TEXT_LIGHT
-MI_BORDER     = BORDER
-MI_GREEN      = GREEN
-MI_RED        = RED
-MI_YELLOW     = YELLOW
 
 
 # ============================================================
@@ -554,7 +543,6 @@ def _find_mumu_manager():
         if os.path.isfile(p):
             return p
     try:
-        from ld_instance_manager import auto_detect_mumu
         info = auto_detect_mumu()
         if info.get("manager_path"):
             return info["manager_path"]
@@ -563,9 +551,10 @@ def _find_mumu_manager():
     return None
 
 
-def backup_config_files(backup_root):
+def backup_config_files(backup_root, vms_dir=None):
     """备份雷电模拟器配置，返回 (备份目录路径, 消息)"""
-    vms_dir = find_vms_config_dir()
+    if not vms_dir:
+        vms_dir = find_vms_config_dir()
     if not vms_dir or not os.path.exists(vms_dir):
         return None, "未找到雷电模拟器配置目录，跳过备份"
     timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
@@ -587,9 +576,9 @@ def backup_config_files(backup_root):
         return None, f"备份失败：{str(e)}"
 
 
-def graceful_kill_async(on_done, on_status=None, on_progress=None, 
+def graceful_kill_async(on_done, on_status=None, on_progress=None,
                          do_backup=False, do_shutdown=False, should_restart=False,
-                         mumu_vms_dir=None):
+                         mumu_vms_dir=None, vms_config_dir=None, multiplayer_config_dir=None):
     """
     后台优雅关闭模拟器进程，替代原 kill_emulators_async
     
@@ -600,6 +589,8 @@ def graceful_kill_async(on_done, on_status=None, on_progress=None,
         do_backup: 是否备份配置
         do_shutdown: 是否关机/重启
         should_restart: True=重启 False=关机
+        vms_config_dir: LDPlayer 实例配置目录（用户配置的路径，优先于自动检测）
+        multiplayer_config_dir: 多开器配置目录
     """
     TOTAL = 60  # 总进度
 
@@ -621,7 +612,6 @@ def graceful_kill_async(on_done, on_status=None, on_progress=None,
         start_ts = time.time()
         backup_msg = ""
         shutdown_executed = False
-        cancelled = False
 
         try:
             # ---- 扫描 ----
@@ -641,21 +631,15 @@ def graceful_kill_async(on_done, on_status=None, on_progress=None,
             if do_backup:
                 _status("正在备份雷电模拟器配置...")
                 _progress(8)
-                backup_dir = os.path.join(_config_dir_abs(), '备份')
-                _, backup_msg = backup_config_files(backup_dir)
+                backup_dir = os.path.join(_config_dir(), '备份')
+                _, backup_msg = backup_config_files(backup_dir, vms_dir=vms_config_dir)
                 _cleanup_old_backups(backup_dir)
                 _status(backup_msg)
 
                 # 也保存一份到快照目录，作为启动时的恢复点
-                vms_cfg_dir = find_vms_config_dir()
-                if vms_cfg_dir:
-                    mp_cfg_dir = None
-                    ld_p = find_ldplayer_install_path(_do_scan() or [])
-                    if ld_p:
-                        mp_path = os.path.join(os.path.dirname(ld_p), 'ldmutiplayer', 'vms', 'config')
-                        if os.path.isdir(mp_path):
-                            mp_cfg_dir = mp_path
-                    save_snapshot(vms_cfg_dir, mp_cfg_dir, SNAPSHOT_DIR, mumu_vms_dir=mumu_vms_dir)
+                cfg_vms = vms_config_dir or find_vms_config_dir()
+                if cfg_vms:
+                    save_snapshot(cfg_vms, multiplayer_config_dir, SNAPSHOT_DIR, mumu_vms_dir=mumu_vms_dir)
 
             if not procs:
                 elapsed = int(time.time() - start_ts)
@@ -731,7 +715,6 @@ def graceful_kill_async(on_done, on_status=None, on_progress=None,
                 _status(f"等待退出 ({exited_count}/{count})  剩余: {still}")
                 time.sleep(1)
             else:
-                remaining = _do_scan()
                 _status(f"阶段1完成，剩余 {len(remaining)} 个进程，进入阶段2")
 
             # ---- 阶段2：逐个 dnconsole quit --index N（针对每个剩余实例）----
@@ -876,6 +859,7 @@ def graceful_kill_async(on_done, on_status=None, on_progress=None,
                             subprocess.run(['taskkill', '/F', '/PID', str(proc['pid'])],
                                            capture_output=True, timeout=5,
                                            creationflags=subprocess.CREATE_NO_WINDOW)
+                            success += 1
                         except Exception:
                             pass
             else:
@@ -930,13 +914,6 @@ def _cleanup_old_backups(backup_root, keep_count=BACKUP_KEEP_COUNT):
         pass
 
 
-def _config_dir_abs():
-    """获取配置/备份目录（exe所在目录）"""
-    if getattr(sys, 'frozen', False):
-        return os.path.dirname(os.path.abspath(sys.executable))
-    return os.path.dirname(os.path.abspath(__file__))
-
-
 def _do_shutdown_countdown(should_restart, _status, _progress, TOTAL, start_ts):
     """关机倒计时并执行 — 使用多级强制关机确保不被拦截"""
     for i in range(SHUTDOWN_CANCEL_WAIT, 0, -1):
@@ -980,7 +957,7 @@ def set_auto_start(enable):
     try:
         key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, REG_KEY_NAME, 0, winreg.KEY_SET_VALUE)
         if enable:
-            winreg.SetValueEx(key, REG_ENTRY_NAME, 0, winreg.REG_SZ, f'"{exe_path}"')
+            winreg.SetValueEx(key, REG_ENTRY_NAME, 0, winreg.REG_SZ, f'"{exe_path}" --nowindow')
         else:
             try:
                 winreg.DeleteValue(key, REG_ENTRY_NAME)
@@ -1000,26 +977,6 @@ def _config_dir():
     if getattr(sys, 'frozen', False):
         return os.path.dirname(os.path.abspath(sys.executable))
     return os.path.dirname(os.path.abspath(__file__))
-
-CONFIG_FILE = os.path.join(_config_dir(), "tasks_config.json")
-
-
-def load_tasks_config():
-    try:
-        if os.path.exists(CONFIG_FILE):
-            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
-    except Exception:
-        pass
-    return []
-
-
-def save_tasks_config(tasks_data):
-    try:
-        with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
-            json.dump(tasks_data, f, ensure_ascii=False, indent=2)
-    except Exception:
-        pass
 
 
 # ============================================================
@@ -1194,6 +1151,7 @@ class EmulatorShutdownApp:
         self._startup_launch_done = False
 
         self._destroyed = False
+        self._config_loaded = False
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self._build_ui()
         self.root.after_idle(self._lazy_init)
@@ -1201,6 +1159,7 @@ class EmulatorShutdownApp:
     def _lazy_init(self):
         """UI 显示后的延迟初始化"""
         self._load_tasks_config()
+        self._config_loaded = True
         self._start_scan_loop()
         self._init_instance_manager()
 
@@ -1414,6 +1373,8 @@ class EmulatorShutdownApp:
                       bg=YELLOW, fg="white", font=self.f_small, padx=8).pack(side="left", padx=(0, 8))
         RoundedButton(ib, text="关闭所有", command=self._on_kill_now,
                       bg=RED, fg="white", font=self.f_small, padx=8).pack(side="left", padx=(0, 8))
+        tk.Label(ib, textvariable=self._kill_status_var,
+                 font=self.f_small, bg=CARD, fg=TEXT_SUB).pack(side="left", padx=(4, 0))
 
         # 间隔启动控件
         tk.Label(ib, text="间隔", font=self.f_small, bg=CARD, fg=TEXT_SUB).pack(side="left")
@@ -1457,6 +1418,15 @@ class EmulatorShutdownApp:
         shutdown_canvas.pack(side="left", fill="both", expand=True)
         shutdown_sb.pack(side="right", fill="y")
         self._shutdown_canvas = shutdown_canvas
+
+        def _on_shutdown_cfg(event):
+            shutdown_canvas.itemconfig("inner", width=event.width)
+        shutdown_canvas.bind("<Configure>", _on_shutdown_cfg)
+
+        def _on_shutdown_scroll(event):
+            shutdown_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        shutdown_canvas.bind("<Enter>", lambda e: shutdown_canvas.bind_all("<MouseWheel>", _on_shutdown_scroll))
+        shutdown_canvas.bind("<Leave>", lambda e: shutdown_canvas.bind_all("<MouseWheel>", _on_mw))
 
         rbtn = tk.Frame(c1, bg=CARD)
         rbtn.pack(fill="x", pady=(4, 0))
@@ -1506,6 +1476,15 @@ class EmulatorShutdownApp:
         launch_sb.pack(side="right", fill="y")
         self._launch_canvas = launch_canvas
 
+        def _on_launch_cfg(event):
+            launch_canvas.itemconfig("inner", width=event.width)
+        launch_canvas.bind("<Configure>", _on_launch_cfg)
+
+        def _on_launch_scroll(event):
+            launch_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        launch_canvas.bind("<Enter>", lambda e: launch_canvas.bind_all("<MouseWheel>", _on_launch_scroll))
+        launch_canvas.bind("<Leave>", lambda e: launch_canvas.bind_all("<MouseWheel>", _on_mw))
+
         lbtn = tk.Frame(c1, bg=CARD)
         lbtn.pack(fill="x", pady=(4, 0))
         RoundedButton(lbtn, text="新建", command=self._add_launch_task,
@@ -1535,7 +1514,7 @@ class EmulatorShutdownApp:
 
     # ---------- 任务共享逻辑 ----------
 
-    def _create_task_ui(self, parent, task, data, color, on_en_toggle, on_delete):
+    def _create_task_ui(self, parent, task, data, color, on_en_toggle, on_delete, make_extra_widget=None):
         """构建任务行的通用 UI 组件（复用于定时关闭和定时启动）
         返回: {"frame", "row", "h_spin", "m_spin", "cd_spin", "st_lbl", "act_btn", "en_var", "mode_var"}
         """
@@ -1601,6 +1580,9 @@ class EmulatorShutdownApp:
         else:
             ff.pack_forget(); cf.pack(side="left")
 
+        if make_extra_widget is not None:
+            make_extra_widget(row)
+
         # 状态
         st_lbl = tk.Label(row, text="待启动", font=("Microsoft YaHei", 9),
                           fg=TEXT_LIGHT, bg=CARD, anchor="w")
@@ -1629,14 +1611,14 @@ class EmulatorShutdownApp:
         """计算任务目标时间戳（定点/倒计时通用）"""
         try:
             if mode == "fixed":
-                h, m = int(h_spin.get()), int(m_spin.get())
+                h, m = int(float(h_spin.get())), int(float(m_spin.get()))
                 t = datetime.now().replace(hour=h, minute=m, second=0, microsecond=0)
                 if t <= datetime.now():
                     t += timedelta(days=1)
                 return t.timestamp()
             else:
-                return (datetime.now() + timedelta(minutes=int(cd_spin.get()))).timestamp()
-        except ValueError:
+                return (datetime.now() + timedelta(minutes=int(float(cd_spin.get())))).timestamp()
+        except (ValueError, TypeError):
             return None
 
     def _make_loop_fn(self, t, time_up_fn, update_fn):
@@ -1685,24 +1667,36 @@ class EmulatorShutdownApp:
         """外部启动任务（从配置加载时调用，通用逻辑）"""
         if t["running"] or not t["enabled"]:
             return
+        # 确保回调不为空（从 task dict 回退取）
+        if time_up_fn is None:
+            time_up_fn = t.get("_time_up_fn")
+        if update_fn is None:
+            update_fn = t.get("_update_fn")
+        if update_fn is None or time_up_fn is None:
+            _log_error("_inline_start_task", "回调函数为空，无法启动任务")
+            return
         try:
             if t["mode"] == "fixed":
-                h = int(t["vars"]["h_spin"].get())
-                m = int(t["vars"]["m_spin"].get())
+                h = int(float(t["vars"]["h_spin"].get()))
+                m = int(float(t["vars"]["m_spin"].get()))
                 target = datetime.now().replace(hour=h, minute=m, second=0, microsecond=0)
                 if target <= datetime.now():
                     target += timedelta(days=1)
                 ts = target.timestamp()
             else:
-                ts = (datetime.now() + timedelta(minutes=int(t["vars"]["cd_spin"].get()))).timestamp()
-        except ValueError:
+                ts = (datetime.now() + timedelta(minutes=int(float(t["vars"]["cd_spin"].get())))).timestamp()
+        except (ValueError, TypeError) as e:
+            _log_error("_inline_start_task", f"时间解析失败: {e}")
             return
         t["running"] = True; t["target_ts"] = ts
-        t["thread"] = threading.Thread(target=self._make_loop_fn(t, time_up_fn, update_fn), daemon=True)
+        # 用局部变量捕获回调，避免闭包问题
+        _tu_fn = time_up_fn
+        _upd_fn = update_fn
+        t["thread"] = threading.Thread(target=self._make_loop_fn(t, _tu_fn, _upd_fn), daemon=True)
         t["thread"].start()
         t["vars"]["act_btn"].config_bg(TEXT_LIGHT)
         t["vars"]["act_btn"].set_text("||")
-        update_fn(t)
+        _upd_fn(t)
         self._save_tasks_config()
 
     def _auto_reset_task(self, t, color, status_fg):
@@ -1711,7 +1705,7 @@ class EmulatorShutdownApp:
         if not t["enabled"]:
             return
         try:
-            h, m = int(t["vars"]["h_spin"].get()), int(t["vars"]["m_spin"].get())
+            h, m = int(float(t["vars"]["h_spin"].get())), int(float(t["vars"]["m_spin"].get()))
         except (ValueError, TypeError):
             return
         target = datetime.now().replace(hour=h, minute=m, second=0, microsecond=0) + timedelta(days=1)
@@ -1835,9 +1829,6 @@ class EmulatorShutdownApp:
         ui["act_btn"].config(command=_toggle)
         task["vars"] = ui
         return task
-
-    def _on_en_toggle(self, task, en_var):
-        self._on_en_toggle_generic(task, en_var, RED)
 
     # ---------- 任务管理 ----------
 
@@ -1966,28 +1957,27 @@ class EmulatorShutdownApp:
                     self.launch_tasks.pop(i); break
             self._save_tasks_config()
 
+        _inst_btn_ref = [None]
+
+        def _make_extra(row):
+            inst_btn = RoundedButton(row, text=f"选择实例 ({len(task['instances'])})",
+                                     command=lambda: self._pick_instances(task, inst_btn),
+                                     bg=GREEN, fg="white", font=self.f_small,
+                                     padx=6, pady=1)
+            inst_btn.pack(side="left", padx=(4, 0))
+            _inst_btn_ref[0] = inst_btn
+            return inst_btn
+
         ui = self._create_task_ui(self.launch_tasks_frame, task, data, color,
                                    on_en_toggle=lambda t, v: self._on_en_toggle_generic(t, v, GREEN),
-                                   on_delete=_delete)
+                                   on_delete=_delete,
+                                   make_extra_widget=_make_extra)
         ui["act_btn"].config(command=_toggle)
         task["vars"] = ui
-
-        # 实例选择按钮（先创建，再调整打包顺序使它在状态标签之前）
-        inst_btn = RoundedButton(ui["row"], text=f"选择实例 ({len(inst_names)})",
-                                 command=lambda: self._pick_instances(task, inst_btn),
-                                 bg=GREEN, fg="white", font=self.f_small,
-                                 padx=6, pady=1)
-        # 把 st_lbl 拆掉重包到 inst_btn 之后，让 inst_btn 显示在 st_lbl 前面
-        st_lbl = ui["st_lbl"]
-        st_lbl.pack_forget()
-        inst_btn.pack(side="left", padx=(4, 0))
-        st_lbl.pack(side="left", padx=(6, 0))
-        task["vars"]["inst_btn"] = inst_btn
+        if _inst_btn_ref[0]:
+            task["vars"]["inst_btn"] = _inst_btn_ref[0]
 
         return task
-
-    def _on_launch_en_toggle(self, task, en_var):
-        self._on_en_toggle_generic(task, en_var, GREEN)
 
     def _pick_instances(self, task, btn):
         """弹出实例选择对话框（含 LDPlayer + MuMu）"""
@@ -2089,8 +2079,8 @@ class EmulatorShutdownApp:
     def _inline_start_launch(self, t):
         if t["running"] or not t["enabled"]:
             return
-        if not t["instances"]:
-            return
+        if not t.get("instances"):
+            return  # 无实例时静默跳过，不弹窗阻塞
         self._inline_start_task(t, GREEN, t.get("_time_up_fn"), t.get("_update_fn"))
 
     def _autoreset_launch(self, t):
@@ -2169,44 +2159,47 @@ class EmulatorShutdownApp:
         finally:
             self._emu_scan_pending = False
 
-    def _refresh_emu(self):
-        self._emu_scan_pending = False
-        self._trigger_scan()
-
     # ---------- 关机由任务触发，无需独立方法 ----------
 
     # ---------- 配置持久化 ----------
 
     def _save_tasks_config(self):
+        # 加载保护：初始化完成前不保存，防止覆盖已有配置
+        if not getattr(self, '_config_loaded', False):
+            return
         config = load_tool_config()
         shutdown_data = []
         for t in self.shutdown_tasks:
             try:
                 shutdown_data.append({
                     "mode": t["mode"],
-                    "hour": int(t["vars"]["h_spin"].get()),
-                    "minute": int(t["vars"]["m_spin"].get()),
-                    "countdown_min": int(t["vars"]["cd_spin"].get()),
+                    "hour": int(float(t["vars"]["h_spin"].get())),
+                    "minute": int(float(t["vars"]["m_spin"].get())),
+                    "countdown_min": int(float(t["vars"]["cd_spin"].get())),
                     "enabled": t["en_var"].get(),
                 })
-            except (KeyError, ValueError):
+            except (KeyError, ValueError, TypeError):
                 pass
-        config["shutdown_tasks"] = shutdown_data
+        # 仅当存在 shutdown 任务或原配置已有 shutdown_tasks 时才覆盖
+        if shutdown_data or config.get("shutdown_tasks"):
+            config["shutdown_tasks"] = shutdown_data
 
         launch_data = []
         for t in self.launch_tasks:
             try:
                 launch_data.append({
                     "mode": t["mode"],
-                    "hour": int(t["vars"]["h_spin"].get()),
-                    "minute": int(t["vars"]["m_spin"].get()),
-                    "countdown_min": int(t["vars"]["cd_spin"].get()),
+                    "hour": int(float(t["vars"]["h_spin"].get())),
+                    "minute": int(float(t["vars"]["m_spin"].get())),
+                    "countdown_min": int(float(t["vars"]["cd_spin"].get())),
                     "enabled": t["en_var"].get(),
                     "instances": list(t.get("instances", [])),
                 })
-            except (KeyError, ValueError):
+            except (KeyError, ValueError, TypeError):
                 pass
-        config["launch_tasks"] = launch_data
+        # 仅当存在 launch 任务或原配置已有 launch_tasks 时才覆盖
+        if launch_data or config.get("launch_tasks"):
+            config["launch_tasks"] = launch_data
 
         config["auto_launch"] = self.auto_launch_var.get()
         config["auto_launch_instances"] = list(self._auto_launch_instances)
@@ -2533,7 +2526,6 @@ class EmulatorShutdownApp:
         # 如果 MuMu 路径未设置，再次检测
         if not self._mumu_path or not os.path.isfile(self._mumu_path):
             try:
-                from ld_instance_manager import find_emulator_from_shortcuts
                 sc = find_emulator_from_shortcuts()
                 if sc.get("mumu_manager") and os.path.isfile(sc["mumu_manager"]):
                     self._mumu_path = sc["mumu_manager"]
@@ -2592,6 +2584,10 @@ class EmulatorShutdownApp:
                 ld_hdr.pack(fill="x", pady=(0, 2))
                 tk.Label(ld_hdr, text="  雷电模拟器", font=self.f_small,
                          bg=BG_LIGHT, fg=PRIMARY).pack(side="left")
+                RoundedButton(ld_hdr, text="启动全部", command=self._on_ld_launch_all,
+                              bg=GREEN, fg="white", font=self.f_small, padx=6, pady=1).pack(side="right", padx=(0, 4))
+                RoundedButton(ld_hdr, text="关闭全部", command=self._on_ld_shutdown_all,
+                              bg=RED, fg="white", font=self.f_small, padx=6, pady=1).pack(side="right", padx=(0, 4))
 
                 for inst in ld_instances:
                     row = tk.Frame(self.inst_rows_frame, bg=CARD)
@@ -3179,12 +3175,9 @@ class EmulatorShutdownApp:
             scrollbar.pack(side="right", fill="y")
 
             for snap in all_snapshots:
-                listbox.insert(tk.END, f"  {snap['timestamp']}  |  {snap['instance_count']} 个实例")
-                # 鼠标悬浮时显示详细信息
                 ld = snap.get('ldplayer_count', 0)
                 mm = snap.get('mumu_count', 0)
-                tooltip_text = f"LDPlayer: {ld} 个 | MuMu: {mm} 个"
-                # 用简单 tooltip（Label 绑定事件显示额外信息）
+                listbox.insert(tk.END, f"  {snap['timestamp']}  |  {snap['instance_count']} 个实例 (LD:{ld} MuMu:{mm})")
 
             btn_row = tk.Frame(win, bg=BG)
             btn_row.pack(fill="x", padx=12, pady=(0, 10))
@@ -3346,6 +3339,49 @@ class EmulatorShutdownApp:
             self.root.after(500, self._scan_and_display_instances)
         threading.Thread(target=_work, daemon=True).start()
 
+    # ---------- LDPlayer 全部启动/关闭 ----------
+
+    def _on_ld_launch_all(self):
+        """启动所有 LDPlayer 实例"""
+        if not self._instances:
+            return
+        dnconsole = self._ld_paths.get("dnconsole")
+        if not dnconsole or not os.path.isfile(dnconsole):
+            messagebox.showerror("错误", "未找到 LDPlayer 命令行工具")
+            return
+        def _work():
+            total = len(self._instances)
+            success = 0
+            for inst in self._instances:
+                ok, msg = launch_instance(dnconsole, inst['name'])
+                if ok:
+                    success += 1
+                time.sleep(2)
+            self.root.after(0, lambda: messagebox.showinfo(
+                "启动完成", f"成功 {success}/{total}"))
+            self.root.after(500, self._scan_and_display_instances)
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _on_ld_shutdown_all(self):
+        """关闭所有 LDPlayer 实例"""
+        if not self._instances:
+            return
+        dnconsole = self._ld_paths.get("dnconsole")
+        if not dnconsole or not os.path.isfile(dnconsole):
+            messagebox.showerror("错误", "未找到 LDPlayer 命令行工具")
+            return
+        def _work():
+            # 优先使用 quitall
+            try:
+                subprocess.run([dnconsole, 'quitall'], capture_output=True, timeout=30,
+                               creationflags=subprocess.CREATE_NO_WINDOW)
+            except Exception:
+                pass
+            time.sleep(5)
+            self.root.after(0, lambda: messagebox.showinfo("关闭完成", "已发送关闭指令"))
+            self.root.after(500, self._scan_and_display_instances)
+        threading.Thread(target=_work, daemon=True).start()
+
     # ---------- LDPlayer 单实例控制 ----------
 
     def _on_ld_launch_one(self, inst_name):
@@ -3368,7 +3404,6 @@ class EmulatorShutdownApp:
             messagebox.showerror("错误", "未找到 LDPlayer 命令行工具")
             return
         # 从实例名提取索引 (leidian0 → 0)
-        import re
         match = re.search(r'(\d+)$', inst_name)
         if not match:
             messagebox.showerror("错误", f"无法解析实例索引: {inst_name}")
@@ -3480,7 +3515,6 @@ class EmulatorShutdownApp:
 
         def _work():
             try:
-                from ld_instance_manager import get_emulator_environment_report
                 report = get_emulator_environment_report()
                 self.root.after(0, lambda r=report: self._update_env_display(r))
             except Exception as e:
@@ -3584,7 +3618,6 @@ class EmulatorShutdownApp:
 
         def _work():
             try:
-                from ld_instance_manager import apply_all_fixes
                 results = apply_all_fixes()
                 success_count = sum(1 for _, ok, _ in results if ok)
                 total = len(results)
@@ -3642,6 +3675,8 @@ def main():
             messagebox.showwarning("警告", "程序已经在运行中！\n请勿重复打开。")
             sys.exit(0)
 
+        no_window = '--nowindow' in sys.argv
+
         if psutil is None and not getattr(sys, 'frozen', False):
             def _install_psutil():
                 try:
@@ -3664,14 +3699,17 @@ def main():
         app = EmulatorShutdownApp(root)
         # 确保所有 UI 渲染完成后再显示
         root.update_idletasks()
-        root.deiconify()
+        if no_window:
+            root.withdraw()
+        else:
+            root.deiconify()
         root.mainloop()
     except Exception:
         import traceback
         try:
             _dir = _config_dir()
             with open(os.path.join(_dir, 'crash.log'), 'w', encoding='utf-8') as f:
-                f.write(f"模拟器管理工具 v4.0 崩溃日志\n")
+                f.write(f"模拟器管理工具 v4.2 崩溃日志\n")
                 f.write(f"时间: {datetime.now()}\n")
                 f.write(f"Python: {sys.version}\n")
                 f.write(f"Frozen: {getattr(sys, 'frozen', False)}\n")

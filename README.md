@@ -37,7 +37,7 @@
 
 ## UI 主题
 
-小米设计语言（Xiaomi Design）— 小米橙主题
+暗色主题（Dark Theme）— 靛蓝/紫色主色调
 
 ## 使用方法
 
@@ -50,7 +50,7 @@
 
 ```bash
 uv pip install pyinstaller
-pyinstaller --onefile --noconsole --name "模拟器管理工具" 模拟器定时关闭工具.py
+pyinstaller --onefile --noconsole --name "模拟器管理工具" 模拟器管理工具.pyw
 ```
 
 ## 技术栈
