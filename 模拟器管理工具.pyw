@@ -55,6 +55,7 @@ WM_CLOSE = 0x0010
 import traceback as _traceback
 
 _LOG_FILE = None
+_LOG_BUFFER = []   # 内存缓冲，关闭时一次性写入
 
 def _get_log_path():
     global _LOG_FILE
@@ -65,24 +66,45 @@ def _get_log_path():
             _dir = os.path.dirname(os.path.abspath(sys.executable))
         else:
             _dir = os.path.dirname(os.path.abspath(__file__))
-        _LOG_FILE = os.path.join(_dir, "emu_tool.log")
+        _LOG_FILE = os.path.join(_dir, "模拟器管理工具_运行日志.txt")
     except Exception:
-        _LOG_FILE = "emu_tool.log"
+        _LOG_FILE = "模拟器管理工具_运行日志.txt"
     return _LOG_FILE
 
 
 def _log_error(context, exc_info=None):
-    """写入错误日志到 exe 同级目录的 emu_tool.log"""
+    """记录错误到内存缓冲，关闭时写入日志文件"""
     try:
         if exc_info is None:
             exc_info = _traceback.format_exc()
         elif isinstance(exc_info, BaseException):
             exc_info = f"{type(exc_info).__name__}: {exc_info}"
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with open(_get_log_path(), 'a', encoding='utf-8') as f:
-            f.write(f"[{ts}] [{context}]\n{exc_info}\n---\n")
+        _LOG_BUFFER.append(f"[{ts}] [{context}]\n{exc_info}\n---\n")
     except Exception:
-        pass  # 日志本身不能再崩溃
+        pass
+
+
+def _log_info(msg):
+    """记录一般信息到内存缓冲"""
+    try:
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        _LOG_BUFFER.append(f"[{ts}] {msg}\n")
+    except Exception:
+        pass
+
+
+def _flush_log():
+    """将缓冲写入日志文件（覆盖模式）"""
+    if not _LOG_BUFFER:
+        return
+    try:
+        header = f"模拟器管理工具 v4.2 运行日志\n{'=' * 50}\n"
+        content = header + "".join(_LOG_BUFFER)
+        with open(_get_log_path(), 'w', encoding='utf-8') as f:
+            f.write(content)
+    except Exception:
+        pass
 
 # -------------------- 关机常量 --------------------
 
@@ -1095,6 +1117,13 @@ class RoundedButton(tk.Frame):
         self.configure(bg=color, highlightbackground=color)
         self._label.configure(bg=color)
 
+    def config(self, **kwargs):
+        """支持 config(command=...) 等标准接口"""
+        if 'command' in kwargs:
+            self._cmd = kwargs.pop('command')
+        if kwargs:
+            super().config(**kwargs)
+
 
 # ============================================================
 # 主界面 — 保留原有全部功能 + 新增安全关机
@@ -1158,8 +1187,10 @@ class EmulatorShutdownApp:
 
     def _lazy_init(self):
         """UI 显示后的延迟初始化"""
+        _log_info("程序启动，开始加载配置...")
         self._load_tasks_config()
         self._config_loaded = True
+        _log_info(f"配置加载完成：关闭任务 {len(self.shutdown_tasks)} 个，启动任务 {len(self.launch_tasks)} 个")
         self._start_scan_loop()
         self._init_instance_manager()
 
@@ -1205,14 +1236,6 @@ class EmulatorShutdownApp:
         def _on_mf_cfg(event):
             main_canvas.itemconfig("main_inner", width=event.width)
         main_canvas.bind("<Configure>", _on_mf_cfg)
-        def _on_mw(event):
-            w = event.widget
-            while w:
-                if w == main_canvas:
-                    main_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-                    break
-                w = getattr(w, "master", None)
-        main_canvas.bind_all("<MouseWheel>", _on_mw)
 
         # ---------- 卡片工厂 ----------
         def make_card(parent, padding=16, accent_color=ACCENT):
@@ -1419,15 +1442,6 @@ class EmulatorShutdownApp:
         shutdown_sb.pack(side="right", fill="y")
         self._shutdown_canvas = shutdown_canvas
 
-        def _on_shutdown_cfg(event):
-            shutdown_canvas.itemconfig("inner", width=event.width)
-        shutdown_canvas.bind("<Configure>", _on_shutdown_cfg)
-
-        def _on_shutdown_scroll(event):
-            shutdown_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-        shutdown_canvas.bind("<Enter>", lambda e: shutdown_canvas.bind_all("<MouseWheel>", _on_shutdown_scroll))
-        shutdown_canvas.bind("<Leave>", lambda e: shutdown_canvas.bind_all("<MouseWheel>", _on_mw))
-
         rbtn = tk.Frame(c1, bg=CARD)
         rbtn.pack(fill="x", pady=(4, 0))
         RoundedButton(rbtn, text="新建", command=lambda: self._add_task("shutdown"),
@@ -1443,11 +1457,13 @@ class EmulatorShutdownApp:
         self.shutdown_var = tk.BooleanVar(value=True)
         tk.Checkbutton(shutdown_opts, text="关闭后关机", variable=self.shutdown_var,
                        font=self.f_small, bg=CARD, fg=RED,
-                       selectcolor=CARD, activebackground=CARD).pack(side="left", padx=(0, 8))
+                       selectcolor=CARD, activebackground=CARD,
+                       command=self._save_tasks_config).pack(side="left", padx=(0, 8))
         self.restart_var = tk.BooleanVar(value=False)
         tk.Checkbutton(shutdown_opts, text="替代为重启", variable=self.restart_var,
                        font=self.f_small, bg=CARD, fg=TEXT_SUB,
-                       selectcolor=CARD, activebackground=CARD).pack(side="left", padx=(0, 8))
+                       selectcolor=CARD, activebackground=CARD,
+                       command=self._save_tasks_config).pack(side="left", padx=(0, 8))
         tk.Label(shutdown_opts, text="（关闭模拟器后自动执行）", font=("Microsoft YaHei", 8),
                  bg=CARD, fg=TEXT_LIGHT).pack(side="left")
 
@@ -1476,15 +1492,6 @@ class EmulatorShutdownApp:
         launch_sb.pack(side="right", fill="y")
         self._launch_canvas = launch_canvas
 
-        def _on_launch_cfg(event):
-            launch_canvas.itemconfig("inner", width=event.width)
-        launch_canvas.bind("<Configure>", _on_launch_cfg)
-
-        def _on_launch_scroll(event):
-            launch_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-        launch_canvas.bind("<Enter>", lambda e: launch_canvas.bind_all("<MouseWheel>", _on_launch_scroll))
-        launch_canvas.bind("<Leave>", lambda e: launch_canvas.bind_all("<MouseWheel>", _on_mw))
-
         lbtn = tk.Frame(c1, bg=CARD)
         lbtn.pack(fill="x", pady=(4, 0))
         RoundedButton(lbtn, text="新建", command=self._add_launch_task,
@@ -1511,6 +1518,35 @@ class EmulatorShutdownApp:
         ft.pack(fill="x")
         tk.Label(ft, text="v4.2 · 环境检测 · 模拟器管理 · 定时任务 · 关机联动",
                  font=("Microsoft YaHei", 7), bg=BG, fg=TEXT_LIGHT).pack(expand=True)
+
+        # 统一滚轮处理：所有 widget 已创建完毕，可以安全引用所有变量
+        self._canvas_scroll_map = {
+            id(main_canvas): main_canvas,
+            id(shutdown_canvas): shutdown_canvas,
+            id(launch_canvas): launch_canvas,
+            id(shutdown_sb): shutdown_canvas,
+            id(launch_sb): launch_canvas,
+            id(main_scrollbar): main_canvas,
+        }
+        def _on_mw(event, canvas=None):
+            if canvas is not None:
+                canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+                return
+            w = event.widget
+            while w:
+                wid = id(w)
+                if wid in self._canvas_scroll_map:
+                    self._canvas_scroll_map[wid].yview_scroll(
+                        int(-1 * (event.delta / 120)), "units")
+                    return
+                w = getattr(w, "master", None)
+
+        # 直接绑定到每个 Canvas，更加可靠
+        main_canvas.bind("<MouseWheel>", lambda e: _on_mw(e, main_canvas), add="+")
+        shutdown_canvas.bind("<MouseWheel>", lambda e: _on_mw(e, shutdown_canvas), add="+")
+        launch_canvas.bind("<MouseWheel>", lambda e: _on_mw(e, launch_canvas), add="+")
+        # 同时也保留 bind_all 作为备选（处理滚动条等区域）
+        main_canvas.bind_all("<MouseWheel>", _on_mw)
 
     # ---------- 任务共享逻辑 ----------
 
@@ -1644,6 +1680,7 @@ class EmulatorShutdownApp:
             return
         t["running"] = True
         t["target_ts"] = ts
+        t["remaining"] = int(ts - time.time())
         t["thread"] = threading.Thread(target=self._make_loop_fn(t, time_up_fn, update_fn), daemon=True)
         t["thread"].start()
         t["vars"]["act_btn"].config_bg(TEXT_LIGHT); t["vars"]["act_btn"].set_text("||")
@@ -1689,6 +1726,8 @@ class EmulatorShutdownApp:
             _log_error("_inline_start_task", f"时间解析失败: {e}")
             return
         t["running"] = True; t["target_ts"] = ts
+        t["remaining"] = int(ts - time.time())  # 预计算剩余时间，让 update_fn 立刻显示正确倒计时
+        _log_info(f"任务启动: id={t.get('id')} 模式={t['mode']} 类型={t.get('type')} target_ts={ts} remaining={t['remaining']}")
         # 用局部变量捕获回调，避免闭包问题
         _tu_fn = time_up_fn
         _upd_fn = update_fn
@@ -1859,8 +1898,15 @@ class EmulatorShutdownApp:
             data = {}
         tid = self.next_launch_id
         self.next_launch_id += 1
-        widget = self._make_launch_task_row(tid, data)
+        _log_info(f"_add_launch_task: 开始创建 tid={tid}")
+        try:
+            widget = self._make_launch_task_row(tid, data)
+            _log_info(f"_add_launch_task: _make_launch_task_row 成功")
+        except Exception as e:
+            _log_error(f"_add_launch_task _make_launch_task_row 异常: {type(e).__name__}: {e}")
+            return
         self.launch_tasks.append(widget)
+        _log_info(f"_add_launch_task: append 后 launch_tasks 数量={len(self.launch_tasks)}")
         self._save_tasks_config()
 
     def _make_launch_task_row(self, task_id, data):
@@ -1938,7 +1984,7 @@ class EmulatorShutdownApp:
             if task["running"] or not task["enabled"]:
                 return
             if not task["instances"]:
-                messagebox.showinfo("提示", "请先选择要启动的实例")
+                self._toast("定时启动", "请先点击「选择实例」勾选要启动的实例")
                 return
             self._start_task(task, color, _time_up, _update_status)
 
@@ -1974,6 +2020,8 @@ class EmulatorShutdownApp:
                                    make_extra_widget=_make_extra)
         ui["act_btn"].config(command=_toggle)
         task["vars"] = ui
+        if not inst_names:
+            task["vars"]["st_lbl"].config(text="需要实例", fg=YELLOW)
         if _inst_btn_ref[0]:
             task["vars"]["inst_btn"] = _inst_btn_ref[0]
 
@@ -2072,9 +2120,17 @@ class EmulatorShutdownApp:
 
     def _start_all_launch(self):
         """全部启动所有定时启动任务"""
+        started = 0
         for t in self.launch_tasks:
             if t["enabled"] and not t["running"]:
+                if not t.get("instances"):
+                    _log_info(f"全部启动：任务 id={t.get('id')} 无实例，跳过")
+                    continue
                 self._inline_start_launch(t)
+                started += 1
+                _log_info(f"全部启动：任务 id={t.get('id')} 已调用启动")
+        if started == 0:
+            _log_info("全部启动：没有可启动的任务（全部无实例或已在运行）")
 
     def _inline_start_launch(self, t):
         if t["running"] or not t["enabled"]:
@@ -2082,7 +2138,6 @@ class EmulatorShutdownApp:
         if not t.get("instances"):
             return  # 无实例时静默跳过，不弹窗阻塞
         self._inline_start_task(t, GREEN, t.get("_time_up_fn"), t.get("_update_fn"))
-
     def _autoreset_launch(self, t):
         self._auto_reset_task(t, GREEN, GREEN)
 
@@ -2167,48 +2222,54 @@ class EmulatorShutdownApp:
         # 加载保护：初始化完成前不保存，防止覆盖已有配置
         if not getattr(self, '_config_loaded', False):
             return
-        config = load_tool_config()
-        shutdown_data = []
-        for t in self.shutdown_tasks:
-            try:
-                shutdown_data.append({
-                    "mode": t["mode"],
-                    "hour": int(float(t["vars"]["h_spin"].get())),
-                    "minute": int(float(t["vars"]["m_spin"].get())),
-                    "countdown_min": int(float(t["vars"]["cd_spin"].get())),
-                    "enabled": t["en_var"].get(),
-                })
-            except (KeyError, ValueError, TypeError):
-                pass
-        # 仅当存在 shutdown 任务或原配置已有 shutdown_tasks 时才覆盖
-        if shutdown_data or config.get("shutdown_tasks"):
+        try:
+            config = load_tool_config()
+            shutdown_data = []
+            for t in self.shutdown_tasks:
+                try:
+                    shutdown_data.append({
+                        "mode": t["mode"],
+                        "hour": int(float(t["vars"]["h_spin"].get())),
+                        "minute": int(float(t["vars"]["m_spin"].get())),
+                        "countdown_min": int(float(t["vars"]["cd_spin"].get())),
+                        "enabled": t["en_var"].get(),
+                    })
+                except Exception as e:
+                    _log_error(f"_save_tasks_config 关闭任务异常: task_id={t.get('id')} {type(e).__name__}: {e}")
+            launch_data = []
+            for t in self.launch_tasks:
+                try:
+                    launch_data.append({
+                        "mode": t["mode"],
+                        "hour": int(float(t["vars"]["h_spin"].get())),
+                        "minute": int(float(t["vars"]["m_spin"].get())),
+                        "countdown_min": int(float(t["vars"]["cd_spin"].get())),
+                        "enabled": t["en_var"].get(),
+                        "instances": list(t.get("instances", [])),
+                    })
+                except Exception as e:
+                    _log_error(f"_save_tasks_config 启动任务异常: task_id={t.get('id')} {type(e).__name__}: {e}")
+            # 始终写入任务数据
             config["shutdown_tasks"] = shutdown_data
-
-        launch_data = []
-        for t in self.launch_tasks:
-            try:
-                launch_data.append({
-                    "mode": t["mode"],
-                    "hour": int(float(t["vars"]["h_spin"].get())),
-                    "minute": int(float(t["vars"]["m_spin"].get())),
-                    "countdown_min": int(float(t["vars"]["cd_spin"].get())),
-                    "enabled": t["en_var"].get(),
-                    "instances": list(t.get("instances", [])),
-                })
-            except (KeyError, ValueError, TypeError):
-                pass
-        # 仅当存在 launch 任务或原配置已有 launch_tasks 时才覆盖
-        if launch_data or config.get("launch_tasks"):
             config["launch_tasks"] = launch_data
-
-        config["auto_launch"] = self.auto_launch_var.get()
-        config["auto_launch_instances"] = list(self._auto_launch_instances)
-        config["shutdown_always"] = self.shutdown_var.get()
-        config["restart_always"] = self.restart_var.get()
-        save_tool_config(config)
+            config["auto_launch"] = self.auto_launch_var.get()
+            config["auto_launch_instances"] = list(self._auto_launch_instances)
+            config["shutdown_always"] = self.shutdown_var.get()
+            config["restart_always"] = self.restart_var.get()
+            _log_info(f"_save_tasks_config: 关闭={len(shutdown_data)}个 启动={len(launch_data)}个")
+            save_tool_config(config)
+            # 验证写入
+            verify = load_tool_config()
+            saved_launch = len(verify.get("launch_tasks", []))
+            if saved_launch != len(launch_data):
+                _log_error(f"_save_tasks_config 写入验证失败: 期望{len(launch_data)}个启动任务 实际{saved_launch}个")
+        except Exception as e:
+            _log_error(f"_save_tasks_config 整体异常: {type(e).__name__}: {e}")
 
     def _load_tasks_config(self):
         config = load_tool_config()
+        # 注意：这里不能设 _config_loaded = True，否则加载过程中的
+        # _save_tasks_config 会用空数据覆盖配置文件
         shutdown_data = config.get("shutdown_tasks", None)
         if shutdown_data is not None:
             for td in shutdown_data:
@@ -2227,7 +2288,29 @@ class EmulatorShutdownApp:
             if t["enabled"] and t["mode"] == "fixed" and t.get("instances"):
                 self._inline_start_launch(t)
 
-    # ---------- 实例管理 ----------
+    def _toast(self, title, message, duration=3000):
+        """右下角自动消失的通知（不阻塞操作）"""
+        try:
+            win = tk.Toplevel(self.root)
+            win.overrideredirect(True)
+            win.attributes("-topmost", True)
+            win.configure(bg="#333")
+            # 标题
+            tk.Label(win, text=title, font=("Microsoft YaHei", 10, "bold"),
+                     bg="#444", fg="white", padx=12, pady=4).pack(fill="x")
+            # 内容
+            tk.Label(win, text=message, font=("Microsoft YaHei", 9),
+                     bg="#333", fg="#ddd", padx=12, pady=8).pack()
+            # 定位到右下角
+            win.update_idletasks()
+            sw = win.winfo_screenwidth()
+            sh = win.winfo_screenheight()
+            ww = win.winfo_reqwidth()
+            wh = win.winfo_reqheight()
+            win.geometry(f"+{sw-ww-20}+{sh-wh-60}")
+            win.after(duration, win.destroy)
+        except Exception:
+            pass  # 静默失败不影响主流程
 
     def _init_instance_manager(self):
         """初始化实例管理器：先搜快捷方式，再加载保存的路径"""
@@ -3430,10 +3513,15 @@ class EmulatorShutdownApp:
 
     def _on_close(self):
         running = sum(1 for t in self.shutdown_tasks if t["running"])
-        if running > 0:
+        launch_running = sum(1 for t in self.launch_tasks if t["running"])
+        _log_info(f"程序关闭（定时关闭运行中: {running}，定时启动运行中: {launch_running}）")
+        if running > 0 or launch_running > 0:
+            total = running + launch_running
             if not messagebox.askyesno("确认退出",
-                                       f"有 {running} 个定时任务正在运行，确认退出？"):
+                                       f"有 {total} 个定时任务正在运行，确认退出？"):
                 return
+        # 保存当前配置和所有勾选状态
+        self._save_tasks_config()
         self._destroyed = True
         for t in self.shutdown_tasks:
             t["running"] = False
@@ -3446,6 +3534,7 @@ class EmulatorShutdownApp:
             try: self.root.after_cancel(self.scan_timer_id)
             except Exception: pass
             self.scan_timer_id = None
+        _flush_log()
         self.root.destroy()
 
     def _minimize_to_tray(self):
@@ -3707,16 +3796,10 @@ def main():
     except Exception:
         import traceback
         try:
-            _dir = _config_dir()
-            with open(os.path.join(_dir, 'crash.log'), 'w', encoding='utf-8') as f:
-                f.write(f"模拟器管理工具 v4.2 崩溃日志\n")
-                f.write(f"时间: {datetime.now()}\n")
-                f.write(f"Python: {sys.version}\n")
-                f.write(f"Frozen: {getattr(sys, 'frozen', False)}\n")
-                f.write(f"可执行文件: {sys.executable}\n")
-                f.write(f"工作目录: {os.getcwd()}\n")
-                f.write("-" * 60 + "\n")
-                traceback.print_exc(file=f)
+            _log_info("程序异常崩溃")
+            tb = traceback.format_exc()
+            _LOG_BUFFER.append(f"\n{tb}\n")
+            _flush_log()
         except Exception:
             pass
         raise

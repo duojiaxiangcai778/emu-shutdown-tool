@@ -1187,7 +1187,7 @@ def _log_error(context, exc_info=None):
             _dir = os.path.dirname(os.path.abspath(sys.executable))
         else:
             _dir = os.path.dirname(os.path.abspath(__file__))
-        log_path = os.path.join(_dir, "emu_tool.log")
+        log_path = os.path.join(_dir, "模拟器管理工具_运行日志.txt")
         if exc_info is None:
             exc_info = traceback.format_exc()
         elif isinstance(exc_info, BaseException):
