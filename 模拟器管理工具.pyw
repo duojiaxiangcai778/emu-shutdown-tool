@@ -1207,9 +1207,16 @@ class EmulatorShutdownApp:
                 latest = snaps[0]  # list_snapshots 按时间降序
                 _log_info(f"发现 {len(snaps)} 个快照，自动恢复最新: {latest['timestamp']}")
                 vms = self._ld_paths.get("vms_config_dir")
+                # 如果 self._ld_paths 没加载成功，从配置文件读取
+                if not vms:
+                    saved_cfg = load_tool_config()
+                    vms = saved_cfg.get("paths", {}).get("vms_config_dir")
                 mp = self._ld_paths.get("multiplayer_path")
+                if not mp:
+                    saved_cfg = load_tool_config()
+                    mp = saved_cfg.get("paths", {}).get("multiplayer_path")
                 mp_cfg = os.path.join(mp, "vms", "config") if mp and os.path.isdir(os.path.join(mp, "vms", "config")) else None
-                result = restore_snapshot(latest["dir_path"], vms, mp_cfg, mumu_vms_dir=self._get_mumu_vms_dir())
+                result = restore_snapshot(latest["path"], vms, mp_cfg, mumu_vms_dir=self._get_mumu_vms_dir())
                 if result.get("success"):
                     _log_info(f"快照恢复成功: {result.get('message', '')}")
         except Exception as e:
@@ -2678,13 +2685,20 @@ class EmulatorShutdownApp:
         _log_error("[DEBUG] === _scan_and_display_instances 开始 ===")
         # ---- 扫描 LDPlayer 实例 ----
         vms_cfg = self._ld_paths.get("vms_config_dir")
-        _log_error(f"[DEBUG] vms_cfg = {vms_cfg}")
+        # 如果 self._ld_paths 没加载成功，直接从配置文件读取
         if not vms_cfg:
-            mp = self._ld_paths.get("multiplayer_path")
-            if mp:
-                vms_cfg = os.path.join(mp, "vms", "config")
-                if not os.path.isdir(vms_cfg):
-                    vms_cfg = None
+            saved = load_tool_config()
+            saved_paths = saved.get("paths", {})
+            vms_cfg = saved_paths.get("vms_config_dir")
+            if vms_cfg and not os.path.isdir(vms_cfg):
+                vms_cfg = None
+            if not vms_cfg:
+                mp = saved_paths.get("multiplayer_path") or self._ld_paths.get("multiplayer_path")
+                if mp:
+                    vms_cfg = os.path.join(mp, "vms", "config")
+                    if not os.path.isdir(vms_cfg):
+                        vms_cfg = None
+        _log_error(f"[DEBUG] vms_cfg = {vms_cfg}")
 
         ld_instances = []
         if vms_cfg:
@@ -3106,6 +3120,13 @@ class EmulatorShutdownApp:
         vms_cfg = self._ld_paths.get("vms_config_dir")
         mp_cfg = None
         mp = self._ld_paths.get("multiplayer_path")
+        if not vms_cfg or not mp:
+            saved = load_tool_config()
+            sp = saved.get("paths", {})
+            if not vms_cfg:
+                vms_cfg = sp.get("vms_config_dir")
+            if not mp:
+                mp = sp.get("multiplayer_path")
         if mp:
             mp_cfg = os.path.join(mp, "vms", "config")
 
