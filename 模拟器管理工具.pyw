@@ -1204,14 +1204,19 @@ class EmulatorShutdownApp:
             from ld_instance_manager import list_snapshots, restore_snapshot
             snaps = list_snapshots(SNAPSHOT_DIR)
             if snaps:
-                latest = snaps[0]  # list_snapshots 按时间降序
+                latest = snaps[0]
                 _log_info(f"发现 {len(snaps)} 个快照，自动恢复最新: {latest['timestamp']}")
                 vms = self._ld_paths.get("vms_config_dir")
-                if not vms:
-                    vms = load_tool_config().get("paths", {}).get("vms_config_dir")
                 mp = self._ld_paths.get("multiplayer_path")
-                if not mp:
-                    mp = load_tool_config().get("paths", {}).get("multiplayer_path")
+                if not vms or not mp:
+                    _cfg = self._find_config_file()
+                    if _cfg:
+                        with open(_cfg, 'r', encoding='utf-8') as _f:
+                            _saved = json.load(_f)
+                        if not vms:
+                            vms = _saved.get("paths", {}).get("vms_config_dir")
+                        if not mp:
+                            mp = _saved.get("paths", {}).get("multiplayer_path")
                 mp_cfg = os.path.join(mp, "vms", "config") if mp and os.path.isdir(os.path.join(mp, "vms", "config")) else None
                 # restore_snapshot 返回 (成功数, 消息)
                 count, msg = restore_snapshot(latest["path"], vms, mp_cfg, mumu_vms_dir=self._get_mumu_vms_dir())
@@ -2687,18 +2692,19 @@ class EmulatorShutdownApp:
         _log_error("[DEBUG] === _scan_and_display_instances 开始 ===")
         # ---- 扫描 LDPlayer 实例 ----
         vms_cfg = self._ld_paths.get("vms_config_dir")
-        # 直接从配置文件读，绕过 load_tool_config（exe 中可能返回空）
+        # 从配置文件读 vms_cfg（搜索多个可能的位置）
         if not vms_cfg:
-            # 用 ld_instance_manager 的 TOOL_CONFIG_FILE（模块导入时已算对路径）
-            from ld_instance_manager import TOOL_CONFIG_FILE
-            _cfg_path = TOOL_CONFIG_FILE
-            _log_error(f"[DEBUG] 尝试读取配置文件: {_cfg_path}")
-            try:
-                with open(_cfg_path, 'r', encoding='utf-8') as _f:
-                    _saved = json.load(_f)
-                vms_cfg = _saved.get("paths", {}).get("vms_config_dir")
-            except Exception as _e:
-                _log_error(f"[DEBUG] 读取配置文件失败: {type(_e).__name__}: {_e}")
+            _cfg_path = self._find_config_file()
+            if _cfg_path:
+                _log_error(f"[DEBUG] 找到配置文件: {_cfg_path}")
+                try:
+                    with open(_cfg_path, 'r', encoding='utf-8') as _f:
+                        _saved = json.load(_f)
+                    vms_cfg = _saved.get("paths", {}).get("vms_config_dir")
+                except Exception as _e:
+                    _log_error(f"[DEBUG] 读取配置文件失败: {type(_e).__name__}: {_e}")
+            else:
+                _log_error("[DEBUG] 未找到配置文件")
         _log_error(f"[DEBUG] vms_cfg = {vms_cfg}")
 
         ld_instances = []
@@ -3122,23 +3128,24 @@ class EmulatorShutdownApp:
         mp_cfg = None
         mp = self._ld_paths.get("multiplayer_path")
         if not vms_cfg or not mp:
-            from ld_instance_manager import TOOL_CONFIG_FILE
-            try:
-                with open(TOOL_CONFIG_FILE, 'r', encoding='utf-8') as _f:
-                    _saved = json.load(_f)
-                sp = _saved.get("paths", {})
-                if not vms_cfg:
-                    vms_cfg = sp.get("vms_config_dir")
-                if not vms_cfg:
-                    ld = sp.get("ld_path") or vms_cfg
-                    if ld:
-                        for p in [os.path.join(ld, "vms", "config"), os.path.join(ld, "vms")]:
-                            if os.path.isdir(p):
-                                vms_cfg = p; break
-                if not mp:
-                    mp = sp.get("multiplayer_path")
-            except Exception as _e:
-                _log_error(f"[DEBUG] 保存快照读取配置失败: {type(_e).__name__}: {_e}")
+            _cfg_path = self._find_config_file()
+            if _cfg_path:
+                try:
+                    with open(_cfg_path, 'r', encoding='utf-8') as _f:
+                        _saved = json.load(_f)
+                    sp = _saved.get("paths", {})
+                    if not vms_cfg:
+                        vms_cfg = sp.get("vms_config_dir")
+                    if not vms_cfg:
+                        ld = sp.get("ld_path") or vms_cfg
+                        if ld:
+                            for p in [os.path.join(ld, "vms", "config"), os.path.join(ld, "vms")]:
+                                if os.path.isdir(p):
+                                    vms_cfg = p; break
+                    if not mp:
+                        mp = sp.get("multiplayer_path")
+                except Exception as _e:
+                    _log_error(f"[DEBUG] 保存快照读取配置失败: {type(_e).__name__}: {_e}")
         if mp:
             mp_cfg = os.path.join(mp, "vms", "config")
 
@@ -3536,6 +3543,38 @@ class EmulatorShutdownApp:
         threading.Thread(target=_work, daemon=True).start()
 
     # ---------- 日志面板 ----------
+
+    def _find_config_file(self):
+        """搜索 instance_config.json 在多个可能的位置"""
+        candidates = []
+
+        # 1. 从 ld_instance_manager 的 TOOL_CONFIG_FILE
+        try:
+            from ld_instance_manager import TOOL_CONFIG_FILE
+            candidates.append(TOOL_CONFIG_FILE)
+        except Exception:
+            pass
+
+        # 2. 从 sys.argv[0]（启动路径）
+        try:
+            argv_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+            candidates.append(os.path.join(argv_dir, "instance_config.json"))
+        except Exception:
+            pass
+
+        # 3. 从当前工作目录
+        try:
+            candidates.append(os.path.join(os.getcwd(), "instance_config.json"))
+        except Exception:
+            pass
+
+        # 4. 从 E:\ 项目目录
+        candidates.append(r"E:\模拟器定时关闭工具\instance_config.json")
+
+        for path in candidates:
+            if path and os.path.isfile(path):
+                return path
+        return None
 
     def _clear_log_display(self):
         """清空日志面板"""
