@@ -11,6 +11,7 @@
 import os
 import sys
 import json
+import re
 import time
 import shutil
 import subprocess
@@ -475,19 +476,19 @@ def save_snapshot(vms_config_dir, multiplayer_config_dir, snapshot_base_dir, mum
         # ---- 备份 LDPlayer 实例配置 ----
         count = 0
         for fname in os.listdir(vms_config_dir):
-            if fname.endswith('.config'):
+            if fname.endswith('.config') and fname != 'leidians.config':
                 src = os.path.join(vms_config_dir, fname)
                 shutil.copy2(src, os.path.join(snap_dir, fname))
                 count += 1
-        _log_error(f"[SNAP] LDPlayer config 文件找到 {count} 个")
+        # 也备份全局配置（不计入实例数）
+        global_cfg = os.path.join(vms_config_dir, 'leidians.config')
+        if os.path.isfile(global_cfg):
+            shutil.copy2(global_cfg, os.path.join(snap_dir, 'leidians.config'))
+        _log_error(f"[SNAP] LDPlayer 实例配置找到 {count} 个")
         if count == 0:
             _log_error(f"[SNAP] vms_config_dir 内容: {os.listdir(vms_config_dir)}")
 
-        # 复制全局配置（多开器的 leidians.config）
-        if multiplayer_config_dir and os.path.isdir(multiplayer_config_dir):
-            global_cfg = os.path.join(multiplayer_config_dir, 'leidians.config')
-            if os.path.isfile(global_cfg):
-                shutil.copy2(global_cfg, os.path.join(snap_dir, 'leidians.config'))
+        # 全局配置已在上面备份，这里不再重复复制
 
         # ---- 备份 MuMu 实例配置 ----
         mumu_count = 0
@@ -539,9 +540,9 @@ def restore_snapshot(snapshot_dir, vms_config_dir, multiplayer_config_dir, mumu_
     restored = 0
     errors = []
 
-    # 恢复 LDPlayer 实例配置
+    # 恢复 LDPlayer 实例配置（排除全局配置 leidians.config）
     for fname in os.listdir(snapshot_dir):
-        if fname.endswith('.config') and fname.startswith('leidian'):
+        if fname.endswith('.config') and fname.startswith('leidian') and fname != 'leidians.config':
             src = os.path.join(snapshot_dir, fname)
             dst = os.path.join(vms_config_dir, fname)
             try:
@@ -550,10 +551,10 @@ def restore_snapshot(snapshot_dir, vms_config_dir, multiplayer_config_dir, mumu_
             except Exception as e:
                 errors.append(f"{fname}: {e}")
 
-    # 恢复全局配置
+    # 恢复全局配置到 vms_config_dir（leidians.config 在此目录）
     global_cfg = os.path.join(snapshot_dir, 'leidians.config')
-    if os.path.isfile(global_cfg) and multiplayer_config_dir and os.path.isdir(multiplayer_config_dir):
-        dst = os.path.join(multiplayer_config_dir, 'leidians.config')
+    if os.path.isfile(global_cfg) and vms_config_dir and os.path.isdir(vms_config_dir):
+        dst = os.path.join(vms_config_dir, 'leidians.config')
         try:
             shutil.copy2(global_cfg, dst)
         except Exception as e:
@@ -632,7 +633,6 @@ def _extract_index(instance_name):
     索引就是末尾的数字
     返回 int 或 None（提取失败）
     """
-    import re
     match = re.search(r'(\d+)$', instance_name)
     if match:
         return int(match.group(1))
@@ -1223,6 +1223,69 @@ def auto_detect_mumu():
             if os.path.isfile(cli):
                 result["cli_path"] = cli
             return result
+
+    # 1b. 从运行中的进程获取路径
+    try:
+        r = subprocess.run(
+            ['wmic', 'process', 'where', "name='MuMuManager.exe'", 'get', 'ExecutablePath'],
+            capture_output=True, text=True, timeout=5,
+            creationflags=subprocess.CREATE_NO_WINDOW
+        )
+        for line in r.stdout.strip().split('\n'):
+            line = line.strip()
+            if line.lower().endswith('mumumanager.exe') and os.path.isfile(line):
+                result["manager_path"] = line
+                result["install_dir"] = os.path.dirname(os.path.dirname(line))
+                result["found"] = True
+                return result
+    except Exception:
+        pass
+
+    # 1c. 从注册表搜索
+    reg_paths = [
+        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Netease\MuMuPlayer-12.0"),
+        (winreg.HKEY_CURRENT_USER, r"SOFTWARE\Netease\MuMuPlayer-12.0"),
+        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Netease\MuMuPlayer-12.0"),
+        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\MuMuPlayer"),
+        (winreg.HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\MuMuPlayer"),
+    ]
+    for hkey, subkey in reg_paths:
+        try:
+            key = winreg.OpenKey(hkey, subkey, 0, winreg.KEY_READ)
+        except Exception:
+            continue
+        try:
+            for val_name in ['InstallPath', 'Path', 'InstallDir', '']:
+                try:
+                    val, _ = winreg.QueryValueEx(key, val_name)
+                    if val and os.path.isdir(val):
+                        # 搜索 nx_main/MuMuManager.exe
+                        for sub in ['', 'nx_main', 'shell']:
+                            mgr = os.path.join(val, sub, 'MuMuManager.exe')
+                            if os.path.isfile(mgr):
+                                result["manager_path"] = mgr
+                                result["install_dir"] = val
+                                result["found"] = True
+                                return result
+                        # 搜索整个目录
+                        for root, dirs, files in os.walk(val):
+                            if "MuMuManager.exe" in files:
+                                result["manager_path"] = os.path.join(root, "MuMuManager.exe")
+                                result["install_dir"] = val
+                                result["found"] = True
+                                return result
+                            # 限制深度为最多 3 级子目录（用 normpath 消除尾部 \\ 和 \\.\\ 的影响）
+                            norm_root = os.path.normpath(root)
+                            norm_val = os.path.normpath(val)
+                            if norm_root.count(os.sep) - norm_val.count(os.sep) >= 3:
+                                dirs.clear()
+                except FileNotFoundError:
+                    continue
+        finally:
+            try:
+                winreg.CloseKey(key)
+            except Exception:
+                pass
 
     # 2. 在 MuMuPlayer 常见路径深度搜索（含子目录）
     search_roots = []
@@ -2000,7 +2063,7 @@ def stop_mumu_health_monitor(monitor):
     if stop_event:
         stop_event.set()
     if thread and thread.is_alive():
-        thread.join(timeout=5)
+        thread.join(timeout=360)  # 等待最多 6 分钟（健康检测可能有长时间阻塞）
 
 
 # ---------- MuMu 卡启动弹窗检测（98% 弹窗自动重启） ----------
@@ -2061,10 +2124,8 @@ def _find_mumu_error_dialog():
     return result if result else None
 
 
-def _click_dialog_button(dialog_hwnd, button_text=None):
-    """在对话框里找按钮并点击。
-    如果 button_text 为 None，尝试点第一个可用的按钮。
-    """
+def _click_dialog_button(dialog_hwnd):
+    """在对话框里找按钮并点击（优先匹配重启/确定/重试按钮）。"""
     try:
         # 尝试 FindWindowEx 找子按钮
         child = user32.FindWindowExW(dialog_hwnd, None, None, None)
