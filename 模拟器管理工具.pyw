@@ -1190,7 +1190,10 @@ class EmulatorShutdownApp:
         _log_info("程序启动，开始加载配置...")
         self._load_tasks_config()
         self._config_loaded = True
-        _log_info(f"配置加载完成：关闭任务 {len(self.shutdown_tasks)} 个，启动任务 {len(self.launch_tasks)} 个")
+        # 读取健康检测开关
+        cfg = load_tool_config()
+        self._mumu_health_check_enabled = cfg.get("mumu_health_check", False)
+        _log_info(f"配置加载完成：关闭任务 {len(self.shutdown_tasks)} 个，启动任务 {len(self.launch_tasks)} 个，健康检测={'开' if self._mumu_health_check_enabled else '关'}")
         self._start_scan_loop()
         self._init_instance_manager()
 
@@ -2257,6 +2260,7 @@ class EmulatorShutdownApp:
             config["shutdown_always"] = self.shutdown_var.get()
             config["restart_always"] = self.restart_var.get()
             _log_info(f"_save_tasks_config: 关闭={len(shutdown_data)}个 启动={len(launch_data)}个")
+            config["mumu_health_check"] = self._mumu_health_check_enabled
             save_tool_config(config)
             # 验证写入
             verify = load_tool_config()
@@ -2724,6 +2728,12 @@ class EmulatorShutdownApp:
                               bg=GREEN, fg="white", font=self.f_small, padx=6, pady=1).pack(side="right", padx=(0, 4))
                 RoundedButton(mm_hdr, text="关闭全部", command=self._on_mumu_shutdown_all,
                               bg=RED, fg="white", font=self.f_small, padx=6, pady=1).pack(side="right", padx=(0, 4))
+                # 健康检测开关
+                self._mumu_health_var = tk.BooleanVar(value=self._mumu_health_check_enabled)
+                tk.Checkbutton(mm_hdr, text="健康检测", variable=self._mumu_health_var,
+                               font=("Microsoft YaHei", 8), bg=BG_LIGHT, fg=TEXT_SUB,
+                               selectcolor=CARD, activebackground=BG_LIGHT,
+                               command=self._save_mumu_health_setting).pack(side="left", padx=(8, 0))
 
                 for inst in mumu_instances:
                     row = tk.Frame(self.inst_rows_frame, bg=CARD)
@@ -3369,12 +3379,24 @@ class EmulatorShutdownApp:
         self.launch_status_var.set(f"完成 {success}/{total}")
         self._scan_and_display_instances()
 
+    def _save_mumu_health_setting(self):
+        """保存健康检测开关状态"""
+        self._mumu_health_check_enabled = self._mumu_health_var.get()
+        _log_info(f"MuMu健康检测: {'开' if self._mumu_health_check_enabled else '关'}")
+        self._save_tasks_config()
+
     # ---------- MuMu 控制 ----------
 
     def _on_mumu_launch_one(self, index):
-        """启动单个 MuMu 实例（带健康检测和自动恢复）"""
+        """启动单个 MuMu 实例"""
         def _work():
-            result = launch_mumu_with_health_check(self._mumu_path, index)
+            if self._mumu_health_check_enabled:
+                result = launch_mumu_with_health_check(self._mumu_path, index)
+                msg = result["message"]
+            else:
+                from ld_instance_manager import launch_mumu_instance
+                ok, msg = launch_mumu_instance(self._mumu_path, index)
+                result = {"success": ok, "message": msg}
             self.root.after(0, lambda: messagebox.showinfo(
                 "启动结果" if result["success"] else "启动失败", result["message"]))
             self.root.after(500, self._scan_and_display_instances)
@@ -3390,17 +3412,23 @@ class EmulatorShutdownApp:
         threading.Thread(target=_work, daemon=True).start()
 
     def _on_mumu_launch_all(self):
-        """启动所有 MuMu 实例（带健康检测和自动恢复）"""
+        """启动所有 MuMu 实例"""
         if not self._mumu_instances:
             return
         def _work():
             total = len(self._mumu_instances)
             success = 0
             for inst in self._mumu_instances:
-                result = launch_mumu_with_health_check(self._mumu_path, inst['index'])
-                if result["success"]:
-                    success += 1
-                time.sleep(2)  # 间隔启动避免争抢资源
+                if self._mumu_health_check_enabled:
+                    result = launch_mumu_with_health_check(self._mumu_path, inst['index'])
+                    if result["success"]:
+                        success += 1
+                else:
+                    from ld_instance_manager import launch_mumu_instance
+                    ok, msg = launch_mumu_instance(self._mumu_path, inst['index'])
+                    if ok:
+                        success += 1
+                time.sleep(2)
             self.root.after(0, lambda: messagebox.showinfo(
                 "启动完成", f"成功 {success}/{total}"))
             self.root.after(500, self._scan_and_display_instances)
