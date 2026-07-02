@@ -19,5 +19,6 @@
   "dialog_geometry": {
     "snapshot_list": "560x400+0+0"
   },
-  "mumu_health_check": false
+  "mumu_health_check": false,
+  "mumu_health_interval": 20
 }

@@ -1271,11 +1271,15 @@ class EmulatorShutdownApp:
         # ---- 右侧：实时日志面板 ----
         right_frame = tk.Frame(paned, bg=CARD, width=280)
         right_frame.pack_propagate(False)
-        # 标题
+        # 标题 + 操作按钮
         log_header = tk.Frame(right_frame, bg=CARD)
         log_header.pack(fill="x", padx=6, pady=(6, 2))
         tk.Label(log_header, text="运行日志", font=("Microsoft YaHei", 9, "bold"),
                  bg=CARD, fg=TEXT).pack(side="left")
+        # 复制按钮
+        tk.Button(log_header, text="复制", font=("Microsoft YaHei", 7),
+                  bg="#444", fg=TEXT_LIGHT, bd=0, padx=4, pady=0,
+                  command=self._copy_log).pack(side="right", padx=(2, 0))
         # 清空按钮
         tk.Button(log_header, text="清空", font=("Microsoft YaHei", 7),
                   bg="#444", fg=TEXT_LIGHT, bd=0, padx=4, pady=0,
@@ -2686,12 +2690,13 @@ class EmulatorShutdownApp:
         # 直接从配置文件读，绕过 load_tool_config（exe 中可能返回空）
         if not vms_cfg:
             _cfg_path = os.path.join(_config_dir(), "instance_config.json")
+            _log_error(f"[DEBUG] 尝试读取配置文件: {_cfg_path}")
             try:
                 with open(_cfg_path, 'r', encoding='utf-8') as _f:
                     _saved = json.load(_f)
                 vms_cfg = _saved.get("paths", {}).get("vms_config_dir")
-            except Exception:
-                pass
+            except Exception as _e:
+                _log_error(f"[DEBUG] 读取配置文件失败: {type(_e).__name__}: {_e}")
         _log_error(f"[DEBUG] vms_cfg = {vms_cfg}")
 
         ld_instances = []
@@ -3130,8 +3135,8 @@ class EmulatorShutdownApp:
                                 vms_cfg = p; break
                 if not mp:
                     mp = sp.get("multiplayer_path")
-            except Exception:
-                pass
+            except Exception as _e:
+                _log_error(f"[DEBUG] 保存快照读取配置失败: {type(_e).__name__}: {_e}")
         if mp:
             mp_cfg = os.path.join(mp, "vms", "config")
 
@@ -3536,6 +3541,18 @@ class EmulatorShutdownApp:
             self._log_text.configure(state="normal")
             self._log_text.delete("1.0", "end")
             self._log_text.configure(state="disabled")
+
+    def _copy_log(self):
+        """复制日志内容到剪贴板"""
+        if not hasattr(self, '_log_text'):
+            return
+        try:
+            content = self._log_text.get("1.0", "end-1c")
+            self.root.clipboard_clear()
+            self.root.clipboard_append(content)
+            self._toast("已复制", f"日志内容已复制到剪贴板")
+        except Exception:
+            pass
 
     def _refresh_log_display(self):
         """刷新右侧日志面板（每秒调用一次）"""
