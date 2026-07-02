@@ -2683,24 +2683,15 @@ class EmulatorShutdownApp:
         _log_error("[DEBUG] === _scan_and_display_instances 开始 ===")
         # ---- 扫描 LDPlayer 实例 ----
         vms_cfg = self._ld_paths.get("vms_config_dir")
-        # 如果 self._ld_paths 没加载成功，直接从配置文件读取
+        # 直接从配置文件读，绕过 load_tool_config（exe 中可能返回空）
         if not vms_cfg:
-            saved = load_tool_config()
-            saved_paths = saved.get("paths", {})
-            vms_cfg = saved_paths.get("vms_config_dir")
-            if not vms_cfg or not os.path.isdir(vms_cfg):
-                # fallback: 从 ld_path 推 vms/config
-                ld = saved_paths.get("ld_path") or self._ld_paths.get("ld_path")
-                if ld:
-                    for p in [os.path.join(ld, "vms", "config"), os.path.join(ld, "vms")]:
-                        if os.path.isdir(p):
-                            vms_cfg = p; break
-            if not vms_cfg:
-                mp = saved_paths.get("multiplayer_path") or self._ld_paths.get("multiplayer_path")
-                if mp:
-                    vms_cfg = os.path.join(mp, "vms", "config")
-                    if not os.path.isdir(vms_cfg):
-                        vms_cfg = None
+            _cfg_path = os.path.join(_config_dir(), "instance_config.json")
+            try:
+                with open(_cfg_path, 'r', encoding='utf-8') as _f:
+                    _saved = json.load(_f)
+                vms_cfg = _saved.get("paths", {}).get("vms_config_dir")
+            except Exception:
+                pass
         _log_error(f"[DEBUG] vms_cfg = {vms_cfg}")
 
         ld_instances = []
@@ -3124,18 +3115,23 @@ class EmulatorShutdownApp:
         mp_cfg = None
         mp = self._ld_paths.get("multiplayer_path")
         if not vms_cfg or not mp:
-            saved = load_tool_config()
-            sp = saved.get("paths", {})
-            if not vms_cfg:
-                vms_cfg = sp.get("vms_config_dir")
-            if not vms_cfg:
-                ld = sp.get("ld_path")
-                if ld:
-                    for p in [os.path.join(ld, "vms", "config"), os.path.join(ld, "vms")]:
-                        if os.path.isdir(p):
-                            vms_cfg = p; break
-            if not mp:
-                mp = sp.get("multiplayer_path")
+            _cfg_path = os.path.join(_config_dir(), "instance_config.json")
+            try:
+                with open(_cfg_path, 'r', encoding='utf-8') as _f:
+                    _saved = json.load(_f)
+                sp = _saved.get("paths", {})
+                if not vms_cfg:
+                    vms_cfg = sp.get("vms_config_dir")
+                if not vms_cfg:
+                    ld = sp.get("ld_path") or vms_cfg
+                    if ld:
+                        for p in [os.path.join(ld, "vms", "config"), os.path.join(ld, "vms")]:
+                            if os.path.isdir(p):
+                                vms_cfg = p; break
+                if not mp:
+                    mp = sp.get("multiplayer_path")
+            except Exception:
+                pass
         if mp:
             mp_cfg = os.path.join(mp, "vms", "config")
 
