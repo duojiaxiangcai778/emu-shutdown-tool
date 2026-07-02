@@ -3580,6 +3580,11 @@ class EmulatorShutdownApp:
             t = threading.Thread(target=_launch_one, args=(inst['index'],), daemon=True)
             t.start()
             threads.append(t)
+            try:
+                delay = int(self.launch_interval_var.get())
+            except (ValueError, TypeError):
+                delay = 5
+            time.sleep(delay)  # 间隔启动，避免争抢资源
 
         def _wait_all():
             for t in threads:
