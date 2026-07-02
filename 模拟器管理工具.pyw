@@ -1195,9 +1195,26 @@ class EmulatorShutdownApp:
         self._mumu_health_check_enabled = cfg.get("mumu_health_check", False)
         self._mumu_health_interval = cfg.get("mumu_health_interval", 20)  # 默认20分钟
         self._mumu_monitors = {}  # index -> monitor handle
+        self._mumu_lock = threading.Lock()  # 多线程访问保护
         _log_info(f"配置加载完成：关闭任务 {len(self.shutdown_tasks)} 个，启动任务 {len(self.launch_tasks)} 个，健康检测={'开' if self._mumu_health_check_enabled else '关'}")
-        self._start_scan_loop()
+        # 先初始化实例管理器（加载路径），再启动扫描
         self._init_instance_manager()
+        # 开机自动恢复最新快照
+        try:
+            from ld_instance_manager import list_snapshots, restore_snapshot
+            snaps = list_snapshots(SNAPSHOT_DIR)
+            if snaps:
+                latest = snaps[0]  # list_snapshots 按时间降序
+                _log_info(f"发现 {len(snaps)} 个快照，自动恢复最新: {latest['timestamp']}")
+                vms = self._ld_paths.get("vms_config_dir")
+                mp = self._ld_paths.get("multiplayer_path")
+                mp_cfg = os.path.join(mp, "vms", "config") if mp and os.path.isdir(os.path.join(mp, "vms", "config")) else None
+                result = restore_snapshot(latest["dir_path"], vms, mp_cfg, mumu_vms_dir=self._get_mumu_vms_dir())
+                if result.get("success"):
+                    _log_info(f"快照恢复成功: {result.get('message', '')}")
+        except Exception as e:
+            _log_error(f"开机自动恢复快照失败: {e}")
+        self._start_scan_loop()
         # 启动右侧日志面板刷新（每秒）
         self.root.after(2000, self._refresh_log_display)
 
@@ -1427,7 +1444,7 @@ class EmulatorShutdownApp:
                       bg=PRIMARY, fg="white", font=self.f_small, padx=8).pack(side="left", padx=(0, 4))
         RoundedButton(ib, text="编辑", command=self._edit_instance_settings,
                       bg=TEXT_SUB, fg="white", font=self.f_small, padx=8).pack(side="left", padx=(0, 4))
-        RoundedButton(ib, text="快照", command=self._save_snapshot,
+        RoundedButton(ib, text="保存快照", command=self._save_snapshot,
                       bg=GREEN, fg="white", font=self.f_small, padx=8).pack(side="left", padx=(0, 4))
         RoundedButton(ib, text="恢复", command=self._restore_snapshot,
                       bg=YELLOW, fg="white", font=self.f_small, padx=8).pack(side="left", padx=(0, 8))
@@ -1450,12 +1467,10 @@ class EmulatorShutdownApp:
         tk.Label(ib, textvariable=self.launch_status_var,
                  font=self.f_small, bg=CARD, fg=TEXT_SUB).pack(side="right", padx=(0, 6))
 
-        # 操作按钮行 2：备份管理
+        # 操作按钮行 2：快照管理
         bb = tk.Frame(c2, bg=CARD)
         bb.pack(fill="x", pady=(4, 0))
-        tk.Label(bb, text="备份", font=self.f_small, bg=CARD, fg=TEXT_SUB).pack(side="left", padx=(0, 6))
-        RoundedButton(bb, text="备份列表", command=self._show_backup_list,
-                      bg=ACCENT, fg="white", font=self.f_small, padx=6, pady=2).pack(side="left", padx=(0, 4))
+        tk.Label(bb, text="快照", font=self.f_small, bg=CARD, fg=TEXT_SUB).pack(side="left", padx=(0, 6))
         RoundedButton(bb, text="快照列表", command=self._show_snapshot_list,
                       bg=ORANGE_LIGHT, fg="white", font=self.f_small, padx=6, pady=2).pack(side="left")
 
@@ -3564,7 +3579,8 @@ class EmulatorShutdownApp:
                     from ld_instance_manager import start_mumu_health_monitor
                     monitor = start_mumu_health_monitor(self._mumu_path, idx,
                                                        check_interval=self._mumu_health_interval * 60)
-                    self._mumu_monitors[idx] = monitor
+                    with self._mumu_lock:
+                        self._mumu_monitors[idx] = monitor
                     _log_info(f"MuMu {idx} 定时巡检已启动（每{self._mumu_health_interval}分钟）")
                 else:
                     from ld_instance_manager import auto_restart_stuck_mumu
