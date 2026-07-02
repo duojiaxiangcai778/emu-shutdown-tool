@@ -1207,18 +1207,16 @@ class EmulatorShutdownApp:
                 latest = snaps[0]  # list_snapshots 按时间降序
                 _log_info(f"发现 {len(snaps)} 个快照，自动恢复最新: {latest['timestamp']}")
                 vms = self._ld_paths.get("vms_config_dir")
-                # 如果 self._ld_paths 没加载成功，从配置文件读取
                 if not vms:
-                    saved_cfg = load_tool_config()
-                    vms = saved_cfg.get("paths", {}).get("vms_config_dir")
+                    vms = load_tool_config().get("paths", {}).get("vms_config_dir")
                 mp = self._ld_paths.get("multiplayer_path")
                 if not mp:
-                    saved_cfg = load_tool_config()
-                    mp = saved_cfg.get("paths", {}).get("multiplayer_path")
+                    mp = load_tool_config().get("paths", {}).get("multiplayer_path")
                 mp_cfg = os.path.join(mp, "vms", "config") if mp and os.path.isdir(os.path.join(mp, "vms", "config")) else None
-                result = restore_snapshot(latest["path"], vms, mp_cfg, mumu_vms_dir=self._get_mumu_vms_dir())
-                if result.get("success"):
-                    _log_info(f"快照恢复成功: {result.get('message', '')}")
+                # restore_snapshot 返回 (成功数, 消息)
+                count, msg = restore_snapshot(latest["path"], vms, mp_cfg, mumu_vms_dir=self._get_mumu_vms_dir())
+                if count > 0:
+                    _log_info(f"快照恢复成功: {msg}")
         except Exception as e:
             _log_error(f"开机自动恢复快照失败: {e}")
         self._start_scan_loop()
@@ -2690,8 +2688,13 @@ class EmulatorShutdownApp:
             saved = load_tool_config()
             saved_paths = saved.get("paths", {})
             vms_cfg = saved_paths.get("vms_config_dir")
-            if vms_cfg and not os.path.isdir(vms_cfg):
-                vms_cfg = None
+            if not vms_cfg or not os.path.isdir(vms_cfg):
+                # fallback: 从 ld_path 推 vms/config
+                ld = saved_paths.get("ld_path") or self._ld_paths.get("ld_path")
+                if ld:
+                    for p in [os.path.join(ld, "vms", "config"), os.path.join(ld, "vms")]:
+                        if os.path.isdir(p):
+                            vms_cfg = p; break
             if not vms_cfg:
                 mp = saved_paths.get("multiplayer_path") or self._ld_paths.get("multiplayer_path")
                 if mp:
@@ -3125,6 +3128,12 @@ class EmulatorShutdownApp:
             sp = saved.get("paths", {})
             if not vms_cfg:
                 vms_cfg = sp.get("vms_config_dir")
+            if not vms_cfg:
+                ld = sp.get("ld_path")
+                if ld:
+                    for p in [os.path.join(ld, "vms", "config"), os.path.join(ld, "vms")]:
+                        if os.path.isdir(p):
+                            vms_cfg = p; break
             if not mp:
                 mp = sp.get("multiplayer_path")
         if mp:
@@ -3132,9 +3141,11 @@ class EmulatorShutdownApp:
 
         snap_dir, msg = save_snapshot(vms_cfg, mp_cfg, SNAPSHOT_DIR, mumu_vms_dir=self._get_mumu_vms_dir())
         if snap_dir:
-            messagebox.showinfo("保存成功", msg)
+            _log_info(f"保存快照成功: {msg}")
+            self._toast("保存成功", msg)
         else:
-            messagebox.showerror("保存失败", msg)
+            _log_error(f"保存快照失败: vms_cfg={vms_cfg} mp_cfg={mp_cfg} msg={msg}")
+            self._toast("保存失败", msg, 4000)
 
     def _restore_snapshot(self):
         """恢复配置快照"""
