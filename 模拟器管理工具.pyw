@@ -2689,7 +2689,9 @@ class EmulatorShutdownApp:
         vms_cfg = self._ld_paths.get("vms_config_dir")
         # 直接从配置文件读，绕过 load_tool_config（exe 中可能返回空）
         if not vms_cfg:
-            _cfg_path = os.path.join(_config_dir(), "instance_config.json")
+            # 用 ld_instance_manager 的 TOOL_CONFIG_FILE（模块导入时已算对路径）
+            from ld_instance_manager import TOOL_CONFIG_FILE
+            _cfg_path = TOOL_CONFIG_FILE
             _log_error(f"[DEBUG] 尝试读取配置文件: {_cfg_path}")
             try:
                 with open(_cfg_path, 'r', encoding='utf-8') as _f:
@@ -3120,9 +3122,9 @@ class EmulatorShutdownApp:
         mp_cfg = None
         mp = self._ld_paths.get("multiplayer_path")
         if not vms_cfg or not mp:
-            _cfg_path = os.path.join(_config_dir(), "instance_config.json")
+            from ld_instance_manager import TOOL_CONFIG_FILE
             try:
-                with open(_cfg_path, 'r', encoding='utf-8') as _f:
+                with open(TOOL_CONFIG_FILE, 'r', encoding='utf-8') as _f:
                     _saved = json.load(_f)
                 sp = _saved.get("paths", {})
                 if not vms_cfg:
