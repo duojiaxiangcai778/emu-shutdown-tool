@@ -3473,10 +3473,11 @@ class EmulatorShutdownApp:
                     idx = inst['index']
                     port = get_mumu_adb_port(idx)
                     adb = check_mumu_adb_connection(idx, timeout=3)
-                    boot = "?" 
+                    boot = "?"
                     if adb:
                         boot = check_mumu_boot_completed(idx, timeout=3)
-                    lines.append(f"  实例{idx}({inst['name']}) ADB端口={port} ADB={'连' if adb else '断'} Boot={'完' if boot else '等'}")
+                    boot_txt = "完" if boot is True else ("等" if boot == "?" else "?")
+                    lines.append(f"  实例{idx}({inst['name']}) ADB端口={port} ADB={'连' if adb else '断'} Boot={boot_txt}")
 
             # 3. 输出
             msg = "\n".join(lines)
@@ -3546,37 +3547,48 @@ class EmulatorShutdownApp:
         threading.Thread(target=_work, daemon=True).start()
 
     def _on_mumu_launch_all(self):
-        """启动所有 MuMu 实例"""
+        """启动所有 MuMu 实例（并行启动，各自独立线程）"""
         if not self._mumu_instances:
             return
-        def _work():
-            total = len(self._mumu_instances)
-            success = 0
-            for inst in self._mumu_instances:
-                idx = inst['index']
-                if self._mumu_health_check_enabled:
-                    result = launch_mumu_with_health_check(self._mumu_path, idx)
-                    if result["success"]:
-                        success += 1
-                        # 启动成功后开启定时巡检
-                        from ld_instance_manager import start_mumu_health_monitor
-                        monitor = start_mumu_health_monitor(self._mumu_path, idx, check_interval=self._mumu_health_interval * 60)
-                        self._mumu_monitors[idx] = monitor
-                        _log_info(f"MuMu {idx} 定时巡检已启动（每{self._mumu_health_interval}分钟）")
-                    else:
-                        from ld_instance_manager import auto_restart_stuck_mumu
-                        _log_info(f"MuMu {idx} 健康检测启动失败，尝试弹窗检测重启")
-                        auto_restart_stuck_mumu(self._mumu_path, idx)
+        total = len(self._mumu_instances)
+        success = [0]  # 用 list 实现线程安全计数
+        threads = []
+
+        def _launch_one(idx):
+            """单个实例的启动逻辑（在独立线程中执行）"""
+            nonlocal success
+            if self._mumu_health_check_enabled:
+                result = launch_mumu_with_health_check(self._mumu_path, idx)
+                if result["success"]:
+                    success[0] += 1
+                    from ld_instance_manager import start_mumu_health_monitor
+                    monitor = start_mumu_health_monitor(self._mumu_path, idx,
+                                                       check_interval=self._mumu_health_interval * 60)
+                    self._mumu_monitors[idx] = monitor
+                    _log_info(f"MuMu {idx} 定时巡检已启动（每{self._mumu_health_interval}分钟）")
                 else:
-                    from ld_instance_manager import launch_mumu_instance
-                    ok, msg = launch_mumu_instance(self._mumu_path, idx)
-                    if ok:
-                        success += 1
-                time.sleep(2)
+                    from ld_instance_manager import auto_restart_stuck_mumu
+                    _log_info(f"MuMu {idx} 健康检测启动失败，尝试弹窗检测重启")
+                    auto_restart_stuck_mumu(self._mumu_path, idx)
+            else:
+                from ld_instance_manager import launch_mumu_instance
+                ok, msg = launch_mumu_instance(self._mumu_path, idx)
+                if ok:
+                    success[0] += 1
+
+        for inst in self._mumu_instances:
+            t = threading.Thread(target=_launch_one, args=(inst['index'],), daemon=True)
+            t.start()
+            threads.append(t)
+
+        def _wait_all():
+            for t in threads:
+                t.join(timeout=600)
             self.root.after(0, lambda: self._toast(
-                "启动完成", f"成功 {success}/{total}"))
+                "启动完成", f"成功 {success[0]}/{total}"))
             self.root.after(500, self._scan_and_display_instances)
-        threading.Thread(target=_work, daemon=True).start()
+
+        threading.Thread(target=_wait_all, daemon=True).start()
 
     def _on_mumu_shutdown_all(self):
         """关闭所有 MuMu 实例"""
