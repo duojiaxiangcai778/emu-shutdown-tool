@@ -1,29 +1,26 @@
 模拟器管理工具 v4.2 运行日志
 ==================================================
-[2026-07-01 22:06:43] 程序启动，开始加载配置...
-[2026-07-01 22:06:43] _add_launch_task: 开始创建 tid=1
-[2026-07-01 22:06:43] _add_launch_task: _make_launch_task_row 成功
-[2026-07-01 22:06:43] _add_launch_task: append 后 launch_tasks 数量=1
-[2026-07-01 22:06:43] 任务启动: id=1 模式=fixed 类型=launch target_ts=1783000800.0 remaining=85996
-[2026-07-01 22:06:43] 配置加载完成：关闭任务 1 个，启动任务 1 个
-[2026-07-01 22:06:43] [[DEBUG] === _scan_and_display_instances 开始 ===]
+[2026-07-02 13:39:18] 程序启动，开始加载配置...
+[2026-07-02 13:39:18] 配置加载完成：关闭任务 0 个，启动任务 0 个，健康检测=关
+[2026-07-02 13:39:18] [[DEBUG] === _scan_and_display_instances 开始 ===]
 NoneType: None
 
 ---
-[2026-07-01 22:06:43] [[DEBUG] vms_cfg = D:\E\LDPlayer9\vms\config]
+[2026-07-02 13:39:18] [[DEBUG] vms_cfg = D:\E\LDPlayer9\vms\config]
 NoneType: None
 
 ---
-[2026-07-01 22:06:43] [[DEBUG] 调用 scan_instances(D:\E\LDPlayer9\vms\config)]
+[2026-07-02 13:39:18] [[DEBUG] 调用 scan_instances(D:\E\LDPlayer9\vms\config)]
 NoneType: None
 
 ---
-[2026-07-01 22:06:43] [[DEBUG] scan_instances 返回 1 个]
+[2026-07-02 13:39:18] [[DEBUG] scan_instances 返回 1 个]
 NoneType: None
 
 ---
-[2026-07-01 22:06:46] _save_tasks_config: 关闭=0个 启动=1个
-[2026-07-01 22:06:48] _save_tasks_config: 关闭=0个 启动=1个
-[2026-07-01 22:06:48] _save_tasks_config: 关闭=0个 启动=0个
-[2026-07-01 22:06:51] 程序关闭（定时关闭运行中: 0，定时启动运行中: 0）
-[2026-07-01 22:06:51] _save_tasks_config: 关闭=0个 启动=0个
+[2026-07-02 13:39:32] MuMu健康检测: 开
+[2026-07-02 13:39:32] _save_tasks_config: 关闭=0个 启动=0个
+[2026-07-02 13:39:33] MuMu健康检测: 关
+[2026-07-02 13:39:33] _save_tasks_config: 关闭=0个 启动=0个
+[2026-07-02 13:39:35] 程序关闭（定时关闭运行中: 0，定时启动运行中: 0）
+[2026-07-02 13:39:35] _save_tasks_config: 关闭=0个 启动=0个

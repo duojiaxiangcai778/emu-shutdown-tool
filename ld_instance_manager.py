@@ -2003,4 +2003,135 @@ def stop_mumu_health_monitor(monitor):
         thread.join(timeout=5)
 
 
+# ---------- MuMu 卡启动弹窗检测（98% 弹窗自动重启） ----------
 
+
+def _find_mumu_error_dialog():
+    """查找 MuMu 模拟器的错误/卡启动弹窗窗口。
+    扫描两类：1)标题匹配关键词的顶层窗口 2)标准对话框(#32770)含运行终止/重启文字
+    返回: [(hwnd, title), ...] 或 None
+    """
+    result = []
+    error_keywords = ["模拟器", "启动失败", "无响应", "重启", "连接超时",
+                      "mumu", "emu", "failed", "timeout", "not responding",
+                      "运行终止", "异常终止", "已停止"]
+
+    @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+    def _enum_callback(hwnd, _):
+        length = user32.GetWindowTextLengthW(hwnd)
+        is_visible = user32.IsWindowVisible(hwnd)
+        if not is_visible:
+            return True
+
+        # 方式1：检查窗口标题
+        if length > 0:
+            buf = ctypes.create_unicode_buffer(length + 1)
+            user32.GetWindowTextW(hwnd, buf, length + 1)
+            title = buf.value.lower()
+            has_mumu = any(kw in title for kw in ["mumu", "模拟器", "emu", "双开", "multi"])
+            has_error = any(kw in title for kw in error_keywords)
+            if has_mumu or has_error:
+                result.append((hwnd, buf.value))
+                return True
+
+        # 方式2：检查标准对话框类（#32770）的子控件文字
+        class_buf = ctypes.create_unicode_buffer(64)
+        user32.GetClassNameW(hwnd, class_buf, 64)
+        class_name = class_buf.value
+        if class_name == "#32770":  # 标准对话框
+            # 枚举子控件找匹配文字
+            child = user32.FindWindowExW(hwnd, None, "Static", None)
+            while child:
+                clen = user32.GetWindowTextLengthW(child)
+                if clen > 0:
+                    cbuf = ctypes.create_unicode_buffer(clen + 1)
+                    user32.GetWindowTextW(child, cbuf, clen + 1)
+                    ctext = cbuf.value.lower()
+                    if any(kw in ctext for kw in ["运行终止", "重启", "启动失败", "显卡驱动"]):
+                        result.append((hwnd, f"#32770: {cbuf.value[:60]}"))
+                        return True
+                child = user32.FindWindowExW(hwnd, child, "Static", None)
+
+        return True
+
+    try:
+        user32.EnumWindows(_enum_callback, 0)
+    except Exception:
+        pass
+    return result if result else None
+
+
+def _click_dialog_button(dialog_hwnd, button_text=None):
+    """在对话框里找按钮并点击。
+    如果 button_text 为 None，尝试点第一个可用的按钮。
+    """
+    try:
+        # 尝试 FindWindowEx 找子按钮
+        child = user32.FindWindowExW(dialog_hwnd, None, None, None)
+        while child:
+            length = user32.GetWindowTextLengthW(child)
+            if length > 0:
+                buf = ctypes.create_unicode_buffer(length + 1)
+                user32.GetWindowTextW(child, buf, length + 1)
+                btn_text = buf.value
+                # 匹配重启/确定/重试等按钮
+                if any(kw in btn_text.lower() for kw in ["立即重启", "重启", "确定", "重试", "restart", "ok", "retry"]):
+                    # 发送 BM_CLICK 消息
+                    win32 = ctypes.windll.user32
+                    win32.SendMessageW(child, 0x00F5, 0, 0)  # BM_CLICK
+                    _log_error(f"[MUMU_DIALOG] 点击按钮: {btn_text}")
+                    return True
+            child = user32.FindWindowExW(dialog_hwnd, child, None, None)
+        # 没找到匹配按钮，尝试第一个按钮
+        child = user32.FindWindowExW(dialog_hwnd, None, "Button", None)
+        if child:
+            win32 = ctypes.windll.user32
+            win32.SendMessageW(child, 0x00F5, 0, 0)
+            _log_error("[MUMU_DIALOG] 点击第一个按钮")
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def auto_restart_stuck_mumu(mumu_manager_path, index, max_attempts=3):
+    """检测 MuMu 卡启动弹窗，自动点重启。
+    结合 ADB 检测 + 窗口检测双重判断。
+    返回: True 表示已处理（重启或弹窗已关闭）
+    """
+    for attempt in range(max_attempts):
+        # 1. 先检查 ADB 是否已连接（正常启动）
+        adb_ok = check_mumu_adb_connection(index, timeout=5)
+        if adb_ok:
+            boot_ok = check_mumu_boot_completed(index, timeout=5)
+            if boot_ok:
+                return True  # 已正常启动
+
+        # 2. 检测错误弹窗
+        dialogs = _find_mumu_error_dialog()
+        if dialogs:
+            for hwnd, title in dialogs:
+                _log_error(f"[MUMU_DIALOG] 发现弹窗: {title}")
+                _click_dialog_button(hwnd)
+                time.sleep(2)
+                # 先关闭可能卡住的实例
+                shutdown_mumu_instance(mumu_manager_path, index)
+                time.sleep(3)
+                # 重新启动
+                ok, msg = launch_mumu_instance(mumu_manager_path, index)
+                _log_error(f"[MUMU_DIALOG] 重启实例 {index}: {msg}")
+                time.sleep(5)
+                break
+        else:
+            # 3. 没弹窗但 ADB 不通 → 可能是普通卡启动，直接重启
+            _log_error(f"[MUMU_DIALOG] 实例 {index} ADB 不通且无弹窗，尝试直接重启")
+            shutdown_mumu_instance(mumu_manager_path, index)
+            time.sleep(3)
+            ok, msg = launch_mumu_instance(mumu_manager_path, index)
+            _log_error(f"[MUMU_DIALOG] 重启实例 {index}: {msg}")
+            time.sleep(10)
+
+        # 等待一会看效果
+        time.sleep(5)
+
+    return False

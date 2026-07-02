@@ -1193,9 +1193,12 @@ class EmulatorShutdownApp:
         # 读取健康检测开关
         cfg = load_tool_config()
         self._mumu_health_check_enabled = cfg.get("mumu_health_check", False)
+        self._mumu_monitors = {}  # index -> monitor handle
         _log_info(f"配置加载完成：关闭任务 {len(self.shutdown_tasks)} 个，启动任务 {len(self.launch_tasks)} 个，健康检测={'开' if self._mumu_health_check_enabled else '关'}")
         self._start_scan_loop()
         self._init_instance_manager()
+        # 启动右侧日志面板刷新（每秒）
+        self.root.after(2000, self._refresh_log_display)
 
     # ---------- UI 构建 ----------
 
@@ -1226,15 +1229,45 @@ class EmulatorShutdownApp:
         # 底部强调线
         tk.Frame(header, bg=PRIMARY, height=2).pack(side="bottom", fill="x")
 
-        # ===== 主内容区（可滚动） =====
-        main_canvas = tk.Canvas(root, bg=BG, highlightthickness=0)
-        main_scrollbar = ttk.Scrollbar(root, orient="vertical", command=main_canvas.yview)
+        # ===== 主内容区（左右分栏） =====
+        paned = tk.PanedWindow(root, bg=BG, orient="horizontal", sashwidth=4, sashrelief="ridge")
+        paned.pack(fill="both", expand=True)
+
+        # ---- 左侧：现有内容（可滚动） ----
+        left_frame = tk.Frame(paned, bg=BG)
+        main_canvas = tk.Canvas(left_frame, bg=BG, highlightthickness=0)
+        main_scrollbar = ttk.Scrollbar(left_frame, orient="vertical", command=main_canvas.yview)
         main_frame = tk.Frame(main_canvas, bg=BG, padx=16, pady=12)
         main_frame.bind("<Configure>", lambda e: main_canvas.configure(scrollregion=main_canvas.bbox("all")))
         main_canvas.create_window((0, 0), window=main_frame, anchor="nw", tags="main_inner")
         main_canvas.configure(yscrollcommand=main_scrollbar.set)
         main_scrollbar.pack(side="right", fill="y")
         main_canvas.pack(side="left", fill="both", expand=True)
+        paned.add(left_frame, stretch="always")
+
+        # ---- 右侧：实时日志面板 ----
+        right_frame = tk.Frame(paned, bg=CARD, width=280)
+        right_frame.pack_propagate(False)
+        # 标题
+        log_header = tk.Frame(right_frame, bg=CARD)
+        log_header.pack(fill="x", padx=6, pady=(6, 2))
+        tk.Label(log_header, text="运行日志", font=("Microsoft YaHei", 9, "bold"),
+                 bg=CARD, fg=TEXT).pack(side="left")
+        # 清空按钮
+        tk.Button(log_header, text="清空", font=("Microsoft YaHei", 7),
+                  bg="#444", fg=TEXT_LIGHT, bd=0, padx=4, pady=0,
+                  command=self._clear_log_display).pack(side="right")
+        # 日志文本框
+        log_frame = tk.Frame(right_frame, bg=CARD)
+        log_frame.pack(fill="both", expand=True, padx=6, pady=(0, 6))
+        self._log_text = tk.Text(log_frame, bg="#1a1a2e", fg="#a0a0c0",
+                                 font=("Consolas", 8), bd=0, wrap="none",
+                                 state="disabled", relief="flat")
+        log_sb = ttk.Scrollbar(log_frame, orient="vertical", command=self._log_text.yview)
+        self._log_text.configure(yscrollcommand=log_sb.set)
+        log_sb.pack(side="right", fill="y")
+        self._log_text.pack(fill="both", expand=True)
+        paned.add(right_frame, width=280, stretch="never")
 
         def _on_mf_cfg(event):
             main_canvas.itemconfig("main_inner", width=event.width)
@@ -2734,6 +2767,10 @@ class EmulatorShutdownApp:
                                font=("Microsoft YaHei", 8), bg=BG_LIGHT, fg=TEXT_SUB,
                                selectcolor=CARD, activebackground=BG_LIGHT,
                                command=self._save_mumu_health_setting).pack(side="left", padx=(8, 0))
+                # 诊断按钮
+                RoundedButton(mm_hdr, text="诊断", command=self._mumu_diagnose,
+                              bg=ORANGE_LIGHT, fg="white", font=("Microsoft YaHei", 8),
+                              padx=4, pady=0).pack(side="left", padx=(2, 0))
 
                 for inst in mumu_instances:
                     row = tk.Frame(self.inst_rows_frame, bg=CARD)
@@ -3381,9 +3418,73 @@ class EmulatorShutdownApp:
 
     def _save_mumu_health_setting(self):
         """保存健康检测开关状态"""
+        old = self._mumu_health_check_enabled
         self._mumu_health_check_enabled = self._mumu_health_var.get()
+        # 关闭健康检测时停止所有巡检
+        if old and not self._mumu_health_check_enabled:
+            from ld_instance_manager import stop_mumu_health_monitor
+            for idx, mon in list(self._mumu_monitors.items()):
+                stop_mumu_health_monitor(mon)
+                del self._mumu_monitors[idx]
+            _log_info("已停止所有 MuMu 定时巡检")
         _log_info(f"MuMu健康检测: {'开' if self._mumu_health_check_enabled else '关'}")
         self._save_tasks_config()
+
+    def _mumu_diagnose(self):
+        """MuMu 诊断：扫描弹窗 + ADB 状态，输出到日志和 toast"""
+        def _work():
+            lines = ["===== MuMu 诊断 ====="]
+            # 1. 扫描 Windows 窗口
+            from ld_instance_manager import _find_mumu_error_dialog
+            dialogs = _find_mumu_error_dialog()
+            if dialogs:
+                lines.append(f"发现 {len(dialogs)} 个相关弹窗:")
+                for hwnd, title in dialogs:
+                    lines.append(f"  HWND={hwnd} 标题={title}")
+            else:
+                lines.append("未发现 MuMu 错误弹窗")
+
+            # 2. ADB 状态
+            if self._mumu_instances:
+                from ld_instance_manager import check_mumu_adb_connection, check_mumu_boot_completed, get_mumu_adb_port
+                for inst in self._mumu_instances:
+                    idx = inst['index']
+                    port = get_mumu_adb_port(idx)
+                    adb = check_mumu_adb_connection(idx, timeout=3)
+                    boot = "?" 
+                    if adb:
+                        boot = check_mumu_boot_completed(idx, timeout=3)
+                    lines.append(f"  实例{idx}({inst['name']}) ADB端口={port} ADB={'连' if adb else '断'} Boot={'完' if boot else '等'}")
+
+            # 3. 输出
+            msg = "\n".join(lines)
+            _log_info(msg)
+            self.root.after(0, lambda: self._toast("MuMu 诊断", f"完成，详情见日志", 4000))
+        threading.Thread(target=_work, daemon=True).start()
+
+    # ---------- 日志面板 ----------
+
+    def _clear_log_display(self):
+        """清空日志面板"""
+        if hasattr(self, '_log_text'):
+            self._log_text.configure(state="normal")
+            self._log_text.delete("1.0", "end")
+            self._log_text.configure(state="disabled")
+
+    def _refresh_log_display(self):
+        """刷新右侧日志面板（每秒调用一次）"""
+        if not hasattr(self, '_log_text') or not self._log_text.winfo_exists():
+            return
+        try:
+            lines = "".join(_LOG_BUFFER)
+            self._log_text.configure(state="normal")
+            self._log_text.delete("1.0", "end")
+            self._log_text.insert("1.0", lines)
+            self._log_text.see("end")  # 滚动到底部
+            self._log_text.configure(state="disabled")
+        except Exception:
+            pass
+        self.root.after(1000, self._refresh_log_display)
 
     # ---------- MuMu 控制 ----------
 
@@ -3393,11 +3494,22 @@ class EmulatorShutdownApp:
             if self._mumu_health_check_enabled:
                 result = launch_mumu_with_health_check(self._mumu_path, index)
                 msg = result["message"]
+                if result["success"]:
+                    # 启动成功后开启定时巡检（每20分钟）
+                    from ld_instance_manager import start_mumu_health_monitor
+                    monitor = start_mumu_health_monitor(self._mumu_path, index)
+                    self._mumu_monitors[index] = monitor
+                    _log_info(f"MuMu {index} 定时巡检已启动")
+                else:
+                    # 健康检测启动失败，尝试检测卡启动弹窗并自动处理
+                    from ld_instance_manager import auto_restart_stuck_mumu
+                    _log_info(f"MuMu {index} 健康检测启动失败，尝试弹窗检测重启")
+                    auto_restart_stuck_mumu(self._mumu_path, index)
             else:
                 from ld_instance_manager import launch_mumu_instance
                 ok, msg = launch_mumu_instance(self._mumu_path, index)
                 result = {"success": ok, "message": msg}
-            self.root.after(0, lambda: messagebox.showinfo(
+            self.root.after(0, lambda: self._toast(
                 "启动结果" if result["success"] else "启动失败", result["message"]))
             self.root.after(500, self._scan_and_display_instances)
         threading.Thread(target=_work, daemon=True).start()
@@ -3419,17 +3531,27 @@ class EmulatorShutdownApp:
             total = len(self._mumu_instances)
             success = 0
             for inst in self._mumu_instances:
+                idx = inst['index']
                 if self._mumu_health_check_enabled:
-                    result = launch_mumu_with_health_check(self._mumu_path, inst['index'])
+                    result = launch_mumu_with_health_check(self._mumu_path, idx)
                     if result["success"]:
                         success += 1
+                        # 启动成功后开启定时巡检
+                        from ld_instance_manager import start_mumu_health_monitor
+                        monitor = start_mumu_health_monitor(self._mumu_path, idx)
+                        self._mumu_monitors[idx] = monitor
+                        _log_info(f"MuMu {idx} 定时巡检已启动")
+                    else:
+                        from ld_instance_manager import auto_restart_stuck_mumu
+                        _log_info(f"MuMu {idx} 健康检测启动失败，尝试弹窗检测重启")
+                        auto_restart_stuck_mumu(self._mumu_path, idx)
                 else:
                     from ld_instance_manager import launch_mumu_instance
-                    ok, msg = launch_mumu_instance(self._mumu_path, inst['index'])
+                    ok, msg = launch_mumu_instance(self._mumu_path, idx)
                     if ok:
                         success += 1
                 time.sleep(2)
-            self.root.after(0, lambda: messagebox.showinfo(
+            self.root.after(0, lambda: self._toast(
                 "启动完成", f"成功 {success}/{total}"))
             self.root.after(500, self._scan_and_display_instances)
         threading.Thread(target=_work, daemon=True).start()
@@ -3550,6 +3672,11 @@ class EmulatorShutdownApp:
                 return
         # 保存当前配置和所有勾选状态
         self._save_tasks_config()
+        # 停止所有 MuMu 定时巡检
+        from ld_instance_manager import stop_mumu_health_monitor
+        for idx, mon in list(self._mumu_monitors.items()):
+            stop_mumu_health_monitor(mon)
+        self._mumu_monitors.clear()
         self._destroyed = True
         for t in self.shutdown_tasks:
             t["running"] = False
