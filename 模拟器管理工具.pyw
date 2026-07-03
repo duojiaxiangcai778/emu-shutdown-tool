@@ -1450,7 +1450,8 @@ class EmulatorShutdownApp:
                 self.mumu_path_entry.config(fg=TEXT)
                 self._mumu_placeholder = False
         def _on_mumu_focusout(_):
-            self._on_mumu_path_enter()
+            if not self._mumu_placeholder:
+                self._on_mumu_path_enter()
             if not self.mumu_path_var.get().strip():
                 self.mumu_path_var.set("")
                 self.mumu_path_entry.insert(0, "输入路径回车，或点浏览")
