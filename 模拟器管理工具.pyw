@@ -1194,6 +1194,8 @@ class EmulatorShutdownApp:
         # MuMu 相关
         self._mumu_path = None
         self._mumu_instances = []
+        # 路径搜索锁（防止重复启动全盘搜索）
+        self._path_search_running = False
 
         self.auto_start_var = tk.BooleanVar(value=is_auto_start_enabled())
         self.auto_launch_var = tk.BooleanVar(value=False)
@@ -2671,7 +2673,6 @@ class EmulatorShutdownApp:
 
     def _scan_and_display_instances(self):
         """扫描并同时显示 LDPlayer + MuMu 实例"""
-        _log_info("[SCAN] 开始扫描实例")
         # ---- 扫描 LDPlayer 实例 ----
         vms_cfg = self._ld_paths.get("vms_config_dir")
         # 从配置文件读 vms_cfg（搜索多个可能的位置）
@@ -2686,19 +2687,22 @@ class EmulatorShutdownApp:
                         self._mumu_path = _saved.get("mumu_manager_path", "")
                 except Exception:
                     pass
-            # 配置文件也没有 → 自动搜索
-            if not vms_cfg:
+            # 配置文件也没有 → 启动一次自动搜索（不重复启动）
+            if not vms_cfg and not self._path_search_running:
+                self._path_search_running = True
                 def _search():
-                    from ld_instance_manager import auto_detect_paths
-                    detected = auto_detect_paths()
-                    self._apply_detected_paths(detected)
+                    try:
+                        from ld_instance_manager import auto_detect_paths
+                        detected = auto_detect_paths()
+                        self.root.after(0, lambda: self._apply_detected_paths(detected))
+                    finally:
+                        self._path_search_running = False
                 threading.Thread(target=_search, daemon=True).start()
-        _log_info(f"[SCAN] vms_cfg = {vms_cfg}")
+                return  # 等搜索完成后由 _apply_detected_paths 触发刷新
 
         ld_instances = []
         if vms_cfg:
             ld_instances = scan_instances(vms_cfg)
-            _log_info(f"[SCAN] LDPlayer: {len(ld_instances)} 个")
             dnconsole = self._ld_paths.get("dnconsole")
             check_running_instances(ld_instances, dnconsole)
         self._instances = ld_instances
@@ -2707,7 +2711,6 @@ class EmulatorShutdownApp:
         mumu_instances = []
         if self._mumu_path and os.path.isfile(self._mumu_path):
             mumu_instances = scan_mumu_instances(self._mumu_path)
-            _log_info(f"[SCAN] MuMu: {len(mumu_instances)} 个")
         self._mumu_instances = mumu_instances
 
         # ---- 清空旧行 ----

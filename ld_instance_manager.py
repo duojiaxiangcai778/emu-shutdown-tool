@@ -107,10 +107,10 @@ def auto_detect_paths():
 def _find_ld_from_process():
     """从运行中的 LDPlayer 进程获取安装路径（优先选含 vms/config 的）"""
     try:
+        # wmic 可能在新版 Windows 被废弃，用 PowerShell Get-CimInstance 作为主检测方式
         r = subprocess.run(
-            ['wmic', 'process', 'where',
-             "name='dnplayer.exe' or name='ldplayer.exe' or name='dnconsole.exe'",
-             'get', 'ExecutablePath'],
+            ["powershell", "-NoProfile", "-Command",
+             "Get-CimInstance Win32_Process | Where-Object { $_.Name -match 'dnplayer|ldplayer|dnconsole|ldconsole|ldplayerservice' } | Select-Object -ExpandProperty ExecutablePath"],
             capture_output=True, text=True, timeout=10,
             creationflags=subprocess.CREATE_NO_WINDOW
         )
@@ -119,6 +119,19 @@ def _find_ld_from_process():
             line = line.strip()
             if line.lower().endswith(('.exe',)) and os.path.isfile(line):
                 candidates.append(os.path.dirname(line))
+        # wmic 备用
+        if not candidates:
+            r2 = subprocess.run(
+                ['wmic', 'process', 'where',
+                 "name='dnplayer.exe' or name='ldplayer.exe' or name='dnconsole.exe' or name='ldplayerservice.exe'",
+                 'get', 'ExecutablePath'],
+                capture_output=True, text=True, timeout=10,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+            for line in r2.stdout.strip().split('\n'):
+                line = line.strip()
+                if line.lower().endswith(('.exe',)) and os.path.isfile(line):
+                    candidates.append(os.path.dirname(line))
         # 优先返回含 vms/config 的路径（正确安装），其次返回第一个
         for c in candidates:
             if os.path.isdir(os.path.join(c, "vms", "config")):
@@ -213,22 +226,16 @@ def _find_ld_from_registry():
 
 
 def _scan_common_paths():
-    """扫描常见安装路径"""
-    candidates = []
+    """遍历所有盘符搜索 dnconsole.exe/ldconsole.exe（不预设目录名，覆盖任意安装路径）"""
     for drive in _get_all_drives():
-        for name in ['LDPlayer9', 'LDPlayer8', 'LDPlayer']:
-            candidates.append(os.path.join(drive, name))
-            candidates.append(os.path.join(drive, 'Program Files', name))
-            candidates.append(os.path.join(drive, 'Program Files (x86)', name))
-            candidates.append(os.path.join(drive, 'Software', name))
-            # 多开器同目录
-            for mp in ['ldmutiplayer', 'LDPlayer', 'ldplayer']:
-                candidates.append(os.path.join(drive, mp))
-
-    for path in candidates:
-        path = os.path.normpath(path)
-        if os.path.isfile(os.path.join(path, 'dnconsole.exe')):
-            return path
+        for root, dirs, files in os.walk(drive):
+            for name in ['dnconsole.exe', 'ldconsole.exe']:
+                if name in files:
+                    return os.path.dirname(os.path.join(root, name))
+            # 限制深度 4 层
+            depth = root.replace(drive, "").count(os.sep)
+            if depth >= 4:
+                dirs.clear()
     return None
 
 
@@ -1217,10 +1224,16 @@ def _log_error(context, exc_info=None):
 
 # 常见 MuMu 安装路径
 MUMU_PATHS_CANDIDATES = [
+    r"C:\Program Files\Netease\MuMu\nx_main\MuMuManager.exe",
+    r"C:\Program Files\Netease\MuMu\shell\MuMuManager.exe",
+    r"C:\Program Files\Netease\MuMu\MuMuManager.exe",
+    r"C:\Program Files\Netease\MuMuPlayer-12.0\nx_main\MuMuManager.exe",
     r"C:\Program Files\Netease\MuMuPlayer-12.0\shell\MuMuManager.exe",
     r"C:\Program Files\Netease\MuMuPlayer-12.0\MuMuManager.exe",
     r"C:\Program Files\MuMuPlayer-12.0\shell\MuMuManager.exe",
+    r"C:\Program Files\MuMuPlayer-12.0\nx_main\MuMuManager.exe",
     r"C:\Program Files (x86)\Netease\MuMuPlayer-12.0\shell\MuMuManager.exe",
+    r"C:\Program Files (x86)\Netease\MuMu\nx_main\MuMuManager.exe",
 ]
 
 
@@ -1244,6 +1257,23 @@ def auto_detect_mumu():
     # 1b. 从运行中的进程获取路径
     try:
         r = subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             "Get-CimInstance Win32_Process | Where-Object { $_.Name -match 'MuMuManager' } | Select-Object -ExpandProperty ExecutablePath"],
+            capture_output=True, text=True, timeout=10,
+            creationflags=subprocess.CREATE_NO_WINDOW
+        )
+        for line in r.stdout.strip().split('\n'):
+            line = line.strip()
+            if line.lower().endswith('mumumanager.exe') and os.path.isfile(line):
+                result["manager_path"] = line
+                result["install_dir"] = os.path.dirname(os.path.dirname(line))
+                result["found"] = True
+                return result
+    except Exception:
+        pass
+    # wmic 备用
+    try:
+        r = subprocess.run(
             ['wmic', 'process', 'where', "name='MuMuManager.exe'", 'get', 'ExecutablePath'],
             capture_output=True, text=True, timeout=5,
             creationflags=subprocess.CREATE_NO_WINDOW
@@ -1260,11 +1290,15 @@ def auto_detect_mumu():
 
     # 1c. 从注册表搜索
     reg_paths = [
+        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Netease\MuMu"),
+        (winreg.HKEY_CURRENT_USER, r"SOFTWARE\Netease\MuMu"),
         (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Netease\MuMuPlayer-12.0"),
         (winreg.HKEY_CURRENT_USER, r"SOFTWARE\Netease\MuMuPlayer-12.0"),
         (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Netease\MuMuPlayer-12.0"),
         (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\MuMuPlayer"),
         (winreg.HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\MuMuPlayer"),
+        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\MuMu"),
+        (winreg.HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\MuMu"),
     ]
     for hkey, subkey in reg_paths:
         try:
@@ -1304,37 +1338,29 @@ def auto_detect_mumu():
             except Exception:
                 pass
 
-    # 2. 在 MuMuPlayer 常见路径深度搜索（含子目录）
-    search_roots = []
-    for drive in "CDEFGHIJKLMNOPQRSTUVWXYZ":
-        base = f"{drive}:\\"
-        if not os.path.exists(base):
-            continue
-        # 盘符根目录
-        search_roots.append(base)
-        # 常见子目录
-        for sub in ["E", "Program Files", "Program Files (x86)", "Programs",
-                     "Software", "Games", "Tools"]:
-            sp = os.path.join(base, sub)
-            if os.path.isdir(sp):
-                search_roots.append(sp)
-
-    for search_root in search_roots:
-        for name in ["MuMu Player 12", "MuMuPlayer-12.0", "MuMuPlayer", "Netease"]:
-            candidate = os.path.join(search_root, name)
-            if os.path.isdir(candidate):
-                for root, dirs, files in os.walk(candidate):
-                    if "MuMuManager.exe" in files:
-                        fp = os.path.join(root, "MuMuManager.exe")
-                        result["manager_path"] = fp
-                        result["install_dir"] = candidate
-                        result["found"] = True
-                        cli = os.path.join(os.path.dirname(root), "mumu-cli.exe")
-                        if os.path.isfile(cli):
-                            result["cli_path"] = cli
-                        return result
-                    if root.count(os.sep) - candidate.count(os.sep) >= 3:
-                        dirs.clear()
+    # 2. 遍历所有盘符搜索 MuMuManager.exe（不预设目录名，覆盖任意安装路径）
+    for drive in _get_all_drives():
+        for root, dirs, files in os.walk(drive):
+            if "MuMuManager.exe" in files:
+                fp = os.path.join(root, "MuMuManager.exe")
+                result["manager_path"] = fp
+                # install_dir 是 nx_main 的上一级
+                mgr_dir = os.path.dirname(root)
+                if os.path.basename(root) == "nx_main":
+                    result["install_dir"] = mgr_dir
+                else:
+                    result["install_dir"] = root
+                result["found"] = True
+                cli = os.path.join(result["install_dir"], "nx_main", "mumu-cli.exe")
+                if not os.path.isfile(cli):
+                    cli = os.path.join(root, "mumu-cli.exe")
+                if os.path.isfile(cli):
+                    result["cli_path"] = cli
+                return result
+            # 限制深度 5 层，避免扫到 system32 等深层目录
+            depth = root.replace(drive, "").count(os.sep)
+            if depth >= 5:
+                dirs.clear()
 
     return result
 
