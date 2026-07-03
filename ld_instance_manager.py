@@ -187,6 +187,9 @@ def _find_ld_from_registry():
         (winreg.HKEY_LOCAL_MACHINE, r"Software\LDPlayer\LDPlayer8"),
         (winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Uninstall\LDPlayer"),
         (winreg.HKEY_LOCAL_MACHINE, r"Software\Microsoft\Windows\CurrentVersion\Uninstall\LDPlayer"),
+        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\LDPlayer"),
+        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\LDPlayer"),
+        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Changzhi\LDPlayer"),
     ]
     for hkey, subkey in reg_paths:
         try:
@@ -2080,9 +2083,6 @@ def stop_mumu_health_monitor(monitor):
         thread.join(timeout=360)  # 等待最多 6 分钟（健康检测可能有长时间阻塞）
 
 
-# ---------- MuMu 卡启动弹窗检测（98% 弹窗自动重启） ----------
-
-
 def _find_mumu_error_dialog():
     """查找 MuMu 模拟器的错误/卡启动弹窗窗口。
     扫描两类：1)标题匹配关键词的顶层窗口 2)标准对话框(#32770)含运行终止/重启文字
@@ -2138,75 +2138,3 @@ def _find_mumu_error_dialog():
     return result if result else None
 
 
-def _click_dialog_button(dialog_hwnd):
-    """在对话框里找按钮并点击（优先匹配重启/确定/重试按钮）。"""
-    try:
-        # 尝试 FindWindowEx 找子按钮
-        child = user32.FindWindowExW(dialog_hwnd, None, None, None)
-        while child:
-            length = user32.GetWindowTextLengthW(child)
-            if length > 0:
-                buf = ctypes.create_unicode_buffer(length + 1)
-                user32.GetWindowTextW(child, buf, length + 1)
-                btn_text = buf.value
-                # 匹配重启/确定/重试等按钮
-                if any(kw in btn_text.lower() for kw in ["立即重启", "重启", "确定", "重试", "restart", "ok", "retry"]):
-                    # 发送 BM_CLICK 消息
-                    win32 = ctypes.windll.user32
-                    win32.SendMessageW(child, 0x00F5, 0, 0)  # BM_CLICK
-                    _log_error(f"[MUMU_DIALOG] 点击按钮: {btn_text}")
-                    return True
-            child = user32.FindWindowExW(dialog_hwnd, child, None, None)
-        # 没找到匹配按钮，尝试第一个按钮
-        child = user32.FindWindowExW(dialog_hwnd, None, "Button", None)
-        if child:
-            win32 = ctypes.windll.user32
-            win32.SendMessageW(child, 0x00F5, 0, 0)
-            _log_info("[MUMU_DIALOG] 点击第一个按钮")
-            return True
-    except Exception:
-        pass
-    return False
-
-
-def auto_restart_stuck_mumu(mumu_manager_path, index, max_attempts=3):
-    """检测 MuMu 卡启动弹窗，自动点重启。
-    结合 ADB 检测 + 窗口检测双重判断。
-    返回: True 表示已处理（重启或弹窗已关闭）
-    """
-    for attempt in range(max_attempts):
-        # 1. 先检查 ADB 是否已连接（正常启动）
-        adb_ok = check_mumu_adb_connection(index, timeout=5)
-        if adb_ok:
-            boot_ok = check_mumu_boot_completed(index, timeout=5)
-            if boot_ok:
-                return True  # 已正常启动
-
-        # 2. 检测错误弹窗
-        dialogs = _find_mumu_error_dialog()
-        if dialogs:
-            for hwnd, title in dialogs:
-                _log_error(f"[MUMU_DIALOG] 发现弹窗: {title}")
-                _click_dialog_button(hwnd)
-                time.sleep(2)
-                # 先关闭可能卡住的实例
-                shutdown_mumu_instance(mumu_manager_path, index)
-                time.sleep(3)
-                # 重新启动
-                ok, msg = launch_mumu_instance(mumu_manager_path, index)
-                _log_error(f"[MUMU_DIALOG] 重启实例 {index}: {msg}")
-                time.sleep(5)
-                break
-        else:
-            # 3. 没弹窗但 ADB 不通 → 可能是普通卡启动，直接重启
-            _log_error(f"[MUMU_DIALOG] 实例 {index} ADB 不通且无弹窗，尝试直接重启")
-            shutdown_mumu_instance(mumu_manager_path, index)
-            time.sleep(3)
-            ok, msg = launch_mumu_instance(mumu_manager_path, index)
-            _log_error(f"[MUMU_DIALOG] 重启实例 {index}: {msg}")
-            time.sleep(10)
-
-        # 等待一会看效果
-        time.sleep(5)
-
-    return False

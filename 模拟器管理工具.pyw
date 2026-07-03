@@ -2429,13 +2429,13 @@ class EmulatorShutdownApp:
             pass  # 静默失败不影响主流程
 
     def _init_instance_manager(self):
-        """初始化实例管理器：先搜快捷方式，再加载保存的路径"""
+        """初始化实例管理器：加载保存路径，缺失时自动搜索"""
         self._load_auto_launch_instances()
         saved = load_tool_config()
         ld_paths = saved.get("paths", {})
         mumu_path = saved.get("mumu_manager_path", "")
 
-        # === 配置迁移：旧版 dnconsole 路径不存在时自动找 ldconsole ===
+        # 配置迁移：旧版 dnconsole 路径不存在时自动找 ldconsole
         if ld_paths.get("ld_path"):
             old_console = ld_paths.get("dnconsole", "")
             if old_console and not os.path.isfile(old_console):
@@ -2445,7 +2445,7 @@ class EmulatorShutdownApp:
                     saved["paths"] = ld_paths
                     save_tool_config(saved)
 
-        # 有保存路径就直接用
+        # 检查保存的路径是否有效
         has_ld = ld_paths.get("ld_path") and bool(_find_ldconsole(ld_paths["ld_path"]))
         has_mumu = mumu_path and os.path.isfile(mumu_path)
 
@@ -2458,215 +2458,21 @@ class EmulatorShutdownApp:
             self.mumu_path_var.set(mumu_path)
             self.mumu_path_entry.config(fg=TEXT)
 
-        # 缺哪个就从桌面快捷方式搜 + 注册表 + 常见路径扫描
-        if not has_ld or not has_mumu:
+        # 路径完整则直接扫描实例，否则在后台搜索
+        if has_ld and has_mumu:
+            self._scan_and_display_instances()
+        else:
             def _work():
                 try:
-                    shortcuts = find_emulator_from_shortcuts()
-                    if not has_ld and shortcuts.get("ld_path"):
-                        p = shortcuts["ld_path"]
-                        console = _find_ldconsole(p)
-                        if console:
-                            self._ld_paths = {
-                                "ld_path": p,
-                                "dnconsole": console,
-                                "multiplayer_path": None,
-                                "dnmultiplayerex": None,
-                                "vms_config_dir": None,
-                            }
-                            vms = os.path.join(p, "vms", "config")
-                            if os.path.isdir(vms):
-                                self._ld_paths["vms_config_dir"] = vms
-                            self.root.after(0, lambda: self.ld_path_var.set(p))
-                            self.root.after(0, lambda: self.ld_path_entry.config(fg=TEXT))
-                    if not has_mumu and shortcuts.get("mumu_manager"):
-                        mp = shortcuts["mumu_manager"]
-                        if os.path.isfile(mp):
-                            self._mumu_path = mp
-                            self.root.after(0, lambda: self.mumu_path_var.set(mp))
-                    # 快捷方式没找到，从注册表搜
-                    if not self._ld_paths.get("ld_path"):
-                        self._scan_ld_from_registry()
-                    if not self._mumu_path:
-                        self._scan_mumu_from_registry()
-                    # 注册表没找到，扫常见安装路径
-                    if not self._ld_paths.get("ld_path"):
-                        self._scan_common_ld_paths()
-                    if not self._mumu_path:
-                        self._scan_common_mumu_paths()
-                    # 从运行中进程补充
-                    if not self._ld_paths.get("ld_path"):
-                        self._scan_ld_from_process()
-                    if not self._mumu_path:
-                        self._scan_mumu_from_process()
-                    # 保存找到的路径
-                    self.root.after(0, self._save_all_paths)
-                    self.root.after(0, self._scan_and_display_instances)
+                    # 统一调用 auto_detect_paths()（进程→注册表→快捷方式→磁盘遍历）
+                    from ld_instance_manager import auto_detect_paths
+                    detected = auto_detect_paths()
+                    self._apply_detected_paths(detected)
                 except Exception:
-                    self.root.after(0, self._scan_and_display_instances)
+                    pass
+                self.root.after(0, self._save_all_paths)
+                self.root.after(0, self._scan_and_display_instances)
             threading.Thread(target=_work, daemon=True).start()
-        else:
-            self._scan_and_display_instances()
-
-    def _scan_common_ld_paths(self):
-        """扫描常见 LDPlayer 安装路径"""
-        for drive in "CDEFGHIJKLMNOPQRSTUVWXYZ":
-            if not os.path.exists(f"{drive}:\\"):
-                continue
-            for ver in ["LDPlayer9", "LDPlayer8", "LDPlayer"]:
-                for sub in ["", "E", "Program Files", "Program Files (x86)", "Programs", "Software"]:
-                    base = os.path.join(f"{drive}:\\", sub, ver) if sub else os.path.join(f"{drive}:\\", ver)
-                    console = _find_ldconsole(base)
-                    if console:
-                        p = base
-                        self._ld_paths = {
-                            "ld_path": p, "dnconsole": console,
-                            "multiplayer_path": None, "dnmultiplayerex": None,
-                            "vms_config_dir": None,
-                        }
-                        vms = os.path.join(p, "vms", "config")
-                        if os.path.isdir(vms):
-                            self._ld_paths["vms_config_dir"] = vms
-                        self.root.after(0, lambda: self.ld_path_var.set(p))
-                        self.root.after(0, lambda: self.ld_path_entry.config(fg=TEXT))
-                        return
-
-    def _scan_common_mumu_paths(self):
-        """扫描常见 MuMu 安装路径"""
-        for drive in "CDEFGHIJKLMNOPQRSTUVWXYZ":
-            if not os.path.exists(f"{drive}:\\"):
-                continue
-            for name in ["MuMu Player 12", "MuMuPlayer-12.0", "Netease"]:
-                for sub in ["", "E", "Program Files", "Program Files (x86)"]:
-                    base = os.path.join(f"{drive}:\\", sub, name) if sub else os.path.join(f"{drive}:\\", name)
-                    if not os.path.isdir(base):
-                        continue
-                    # 搜索 MuMuManager.exe
-                    for root, dirs, files in os.walk(base):
-                        if "MuMuManager.exe" in files:
-                            fp = os.path.join(root, "MuMuManager.exe")
-                            self._mumu_path = fp
-                            self.root.after(0, lambda: self.mumu_path_var.set(fp))
-                            return
-                        if root.count(os.sep) - base.count(os.sep) >= 2:
-                            dirs.clear()
-
-    def _scan_ld_from_registry(self):
-        """从注册表搜索 LDPlayer 安装路径"""
-        try:
-            import winreg
-            for hkey, subkey in [
-                (winreg.HKEY_CURRENT_USER, r"Software\LDPlayer\LDPlayer9"),
-                (winreg.HKEY_CURRENT_USER, r"Software\LDPlayer\LDPlayer8"),
-                (winreg.HKEY_LOCAL_MACHINE, r"Software\LDPlayer\LDPlayer9"),
-                (winreg.HKEY_LOCAL_MACHINE, r"Software\LDPlayer\LDPlayer8"),
-                (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\LDPlayer"),
-                (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\LDPlayer"),
-            ]:
-                try:
-                    key = winreg.OpenKey(hkey, subkey, 0, winreg.KEY_READ)
-                    for val_name in ['InstallPath', 'Path', 'InstallDir', '']:
-                        try:
-                            val, _ = winreg.QueryValueEx(key, val_name)
-                            if val and os.path.isdir(val):
-                                console = _find_ldconsole(val)
-                                if console:
-                                    self._ld_paths = {
-                                        "ld_path": val, "dnconsole": console,
-                                        "multiplayer_path": None, "dnmultiplayerex": None,
-                                        "vms_config_dir": None,
-                                    }
-                                    vms = os.path.join(val, "vms", "config")
-                                    if os.path.isdir(vms):
-                                        self._ld_paths["vms_config_dir"] = vms
-                                    self.root.after(0, lambda: self.ld_path_var.set(val))
-                                    self.root.after(0, lambda: self.ld_path_entry.config(fg=TEXT))
-                                    winreg.CloseKey(key)
-                                    return
-                        except FileNotFoundError:
-                            continue
-                    winreg.CloseKey(key)
-                except Exception:
-                    pass
-        except Exception:
-            pass
-
-    def _scan_mumu_from_registry(self):
-        """从注册表搜索 MuMu 安装路径"""
-        try:
-            import winreg
-            for hkey, subkey in [
-                (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Netease\MuMuPlayer-12.0"),
-                (winreg.HKEY_CURRENT_USER, r"SOFTWARE\Netease\MuMuPlayer-12.0"),
-                (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Netease\MuMuPlayer-12.0"),
-            ]:
-                try:
-                    key = winreg.OpenKey(hkey, subkey, 0, winreg.KEY_READ)
-                    for val_name in ['InstallPath', 'Path', 'InstallDir', '']:
-                        try:
-                            val, _ = winreg.QueryValueEx(key, val_name)
-                            if val and os.path.isdir(val):
-                                for sub in ['', 'nx_main', 'shell']:
-                                    mgr = os.path.join(val, sub, "MuMuManager.exe")
-                                    if os.path.isfile(mgr):
-                                        self._mumu_path = mgr
-                                        self.root.after(0, lambda: self.mumu_path_var.set(mgr))
-                                        winreg.CloseKey(key)
-                                        return
-                        except FileNotFoundError:
-                            continue
-                    winreg.CloseKey(key)
-                except Exception:
-                    pass
-        except Exception:
-            pass
-
-    def _scan_ld_from_process(self):
-        """从运行中的 LDPlayer 进程获取安装路径"""
-        try:
-            r = subprocess.run(
-                ['wmic', 'process', 'where',
-                 "name='dnplayer.exe' or name='ldplayer.exe' or name='dnconsole.exe'",
-                 'get', 'ExecutablePath'],
-                capture_output=True, text=True, timeout=10,
-                creationflags=subprocess.CREATE_NO_WINDOW
-            )
-            for line in r.stdout.strip().split('\n'):
-                line = line.strip()
-                if line.lower().endswith(('.exe',)) and os.path.isfile(line):
-                    p = os.path.dirname(line)
-                    console = _find_ldconsole(p)
-                    if console:
-                        self._ld_paths = {
-                            "ld_path": p, "dnconsole": console,
-                            "multiplayer_path": None, "dnmultiplayerex": None,
-                            "vms_config_dir": None,
-                        }
-                        vms = os.path.join(p, "vms", "config")
-                        if os.path.isdir(vms):
-                            self._ld_paths["vms_config_dir"] = vms
-                        self.root.after(0, lambda: self.ld_path_var.set(p))
-                        self.root.after(0, lambda: self.ld_path_entry.config(fg=TEXT))
-                        return
-        except Exception:
-            pass
-
-    def _scan_mumu_from_process(self):
-        """从运行中的 MuMu 进程获取安装路径"""
-        try:
-            r = subprocess.run(
-                ['wmic', 'process', 'where', "name='MuMuManager.exe'", 'get', 'ExecutablePath'],
-                capture_output=True, text=True, timeout=5,
-                creationflags=subprocess.CREATE_NO_WINDOW
-            )
-            for line in r.stdout.strip().split('\n'):
-                line = line.strip()
-                if line.lower().endswith('mumumanager.exe') and os.path.isfile(line):
-                    self._mumu_path = line
-                    self.root.after(0, lambda: self.mumu_path_var.set(line))
-                    return
-        except Exception:
-            pass
 
     def _save_all_paths(self):
         """保存 LDPlayer 和 MuMu 路径到配置（合并而非覆盖）"""
@@ -2865,52 +2671,43 @@ class EmulatorShutdownApp:
 
     def _scan_and_display_instances(self):
         """扫描并同时显示 LDPlayer + MuMu 实例"""
-        _log_info("[DEBUG] === _scan_and_display_instances 开始 ===")
+        _log_info("[SCAN] 开始扫描实例")
         # ---- 扫描 LDPlayer 实例 ----
         vms_cfg = self._ld_paths.get("vms_config_dir")
         # 从配置文件读 vms_cfg（搜索多个可能的位置）
         if not vms_cfg:
-            # 先找配置文件
             _cfg_path = self._find_config_file()
             if _cfg_path:
-                _log_info(f"[DEBUG] 找到配置文件: {_cfg_path}")
                 try:
                     with open(_cfg_path, 'r', encoding='utf-8') as _f:
                         _saved = json.load(_f)
                     vms_cfg = _saved.get("paths", {}).get("vms_config_dir")
                     if not self._mumu_path:
                         self._mumu_path = _saved.get("mumu_manager_path", "")
-                except Exception as _e:
-                    _log_error(f"[DEBUG] 读取配置文件失败: {type(_e).__name__}: {_e}")
-            # 配置文件也没有 → 自动搜索注册表/快捷方式/磁盘
+                except Exception:
+                    pass
+            # 配置文件也没有 → 自动搜索
             if not vms_cfg:
-                _log_info("[DEBUG] 配置文件无路径，开始自动搜索模拟器...")
-                # 在后台线程搜索，不阻塞 UI
                 def _search():
-                    detected = self._auto_detect_paths()
-                    self.root.after(0, lambda: self._apply_detected_paths(detected))
+                    from ld_instance_manager import auto_detect_paths
+                    detected = auto_detect_paths()
+                    self._apply_detected_paths(detected)
                 threading.Thread(target=_search, daemon=True).start()
-            _log_info(f"[DEBUG] vms_cfg = {vms_cfg}")
-        _log_info(f"[DEBUG] vms_cfg = {vms_cfg}")
+        _log_info(f"[SCAN] vms_cfg = {vms_cfg}")
 
         ld_instances = []
         if vms_cfg:
-            _log_info(f"[DEBUG] 调用 scan_instances({vms_cfg})")
             ld_instances = scan_instances(vms_cfg)
-            _log_info(f"[DEBUG] scan_instances 返回 {len(ld_instances)} 个")
+            _log_info(f"[SCAN] LDPlayer: {len(ld_instances)} 个")
             dnconsole = self._ld_paths.get("dnconsole")
             check_running_instances(ld_instances, dnconsole)
-        else:
-            _log_info("[DEBUG] vms_cfg 为空，不扫描")
         self._instances = ld_instances
 
         # ---- 扫描 MuMu 实例 ----
         mumu_instances = []
         if self._mumu_path and os.path.isfile(self._mumu_path):
             mumu_instances = scan_mumu_instances(self._mumu_path)
-            _log_info(f"[DEBUG] MuMu 扫描: {len(mumu_instances)} 个")
-        else:
-            _log_info(f"[DEBUG] MuMu 跳过: path={self._mumu_path} exist={self._mumu_path and os.path.isfile(self._mumu_path)}")
+            _log_info(f"[SCAN] MuMu: {len(mumu_instances)} 个")
         self._mumu_instances = mumu_instances
 
         # ---- 清空旧行 ----
@@ -3335,18 +3132,18 @@ class EmulatorShutdownApp:
                         mp = sp.get("multiplayer_path")
                     if not self._mumu_path:
                         self._mumu_path = _saved.get("mumu_manager_path", "")
-                except Exception as _e:
-                    _log_info(f"[DEBUG] 保存快照读取配置失败: {type(_e).__name__}: {_e}")
+                except Exception:
+                    pass
             # 配置文件也没有 → 自动搜索
             if not vms_cfg or not mp:
-                detected = self._auto_detect_paths()
+                from ld_instance_manager import auto_detect_paths
+                detected = auto_detect_paths()
                 if not vms_cfg and detected.get("vms_config_dir"):
                     vms_cfg = detected["vms_config_dir"]
                 if not mp and detected.get("multiplayer_path"):
                     mp = detected["multiplayer_path"]
                 if not self._mumu_path and detected.get("mumu_manager_path"):
                     self._mumu_path = detected["mumu_manager_path"]
-                _log_info(f"[DEBUG] 保存快照自动搜索: vms={vms_cfg} mp={mp} mumu={self._mumu_path}")
         if mp:
             mp_cfg = os.path.join(mp, "vms", "config")
 
@@ -3774,142 +3571,18 @@ class EmulatorShutdownApp:
                 return path
         return None
 
-    def _auto_detect_paths(self):
-        """自动搜索所有模拟器路径（注册表、快捷方式、常见安装位置）"""
-        results = {"ld_path": None, "dnconsole": None, "vms_config_dir": None,
-                   "multiplayer_path": None, "mumu_manager_path": None}
-
-        # 1. 注册表搜 LDPlayer
-        try:
-            import winreg
-            for key_path in [r"SOFTWARE\LDPlayer", r"SOFTWARE\WOW6432Node\LDPlayer",
-                             r"SOFTWARE\Changzhi\LDPlayer"]:
-                try:
-                    key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path)
-                    results["ld_path"], _ = winreg.QueryValueEx(key, "InstallDir")
-                    winreg.CloseKey(key)
-                    break
-                except Exception:
-                    pass
-        except Exception:
-            pass
-
-        # 2. 从注册表推算 vms_config_dir 和 dnconsole
-        if results["ld_path"]:
-            ld = results["ld_path"]
-            # vms/config
-            for vms in [os.path.join(ld, "vms", "config"), os.path.join(ld, "..", "vms", "config")]:
-                vms = os.path.abspath(vms)
-                if os.path.isdir(vms):
-                    results["vms_config_dir"] = vms; break
-            # dnconsole/ldconsole
-            for name in ["dnconsole.exe", "ldconsole.exe"]:
-                fp = os.path.join(ld, name)
-                if os.path.isfile(fp):
-                    results["dnconsole"] = fp; break
-            # multiplayer
-            mp = os.path.join(os.path.dirname(ld), "ldmutiplayer")
-            if os.path.isdir(mp):
-                results["multiplayer_path"] = mp
-                for name in ["dnmultiplayerex.exe", "ldmultiplayerex.exe"]:
-                    fp = os.path.join(mp, name)
-                    if os.path.isfile(fp):
-                        results["dnmultiplayerex"] = fp; break
-
-        # 3. 从快捷方式搜 MuMuManager
-        try:
-            from ld_instance_manager import find_emulator_from_shortcuts
-            shortcuts = find_emulator_from_shortcuts()
-            if shortcuts.get("mumu_manager"):
-                results["mumu_manager_path"] = shortcuts["mumu_manager"]
-        except Exception:
-            pass
-
-        # 3b. 从注册表搜 MuMu
-        if not results["mumu_manager_path"]:
-            try:
-                for hkey, subkey in [
-                    (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Netease\MuMuPlayer-12.0"),
-                    (winreg.HKEY_CURRENT_USER, r"SOFTWARE\Netease\MuMuPlayer-12.0"),
-                    (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Netease\MuMuPlayer-12.0"),
-                ]:
-                    try:
-                        key = winreg.OpenKey(hkey, subkey, 0, winreg.KEY_READ)
-                        for val_name in ['InstallPath', 'Path', 'InstallDir', '']:
-                            try:
-                                val, _ = winreg.QueryValueEx(key, val_name)
-                                if val and os.path.isdir(val):
-                                    for sub in ['', 'nx_main', 'shell']:
-                                        mgr = os.path.join(val, sub, "MuMuManager.exe")
-                                        if os.path.isfile(mgr):
-                                            results["mumu_manager_path"] = mgr
-                                            break
-                                if results["mumu_manager_path"]:
-                                    break
-                            except FileNotFoundError:
-                                continue
-                        winreg.CloseKey(key)
-                        if results["mumu_manager_path"]:
-                            break
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-
-        # 3c. 从运行中进程搜 MuMu
-        if not results["mumu_manager_path"]:
-            try:
-                r = subprocess.run(
-                    ['wmic', 'process', 'where', "name='MuMuManager.exe'", 'get', 'ExecutablePath'],
-                    capture_output=True, text=True, timeout=5,
-                    creationflags=subprocess.CREATE_NO_WINDOW
-                )
-                for line in r.stdout.strip().split('\n'):
-                    line = line.strip()
-                    if line.lower().endswith('mumumanager.exe') and os.path.isfile(line):
-                        results["mumu_manager_path"] = line
-                        break
-            except Exception:
-                pass
-
-        # 4. 搜常见安装目录找 MuMu
-        if not results["mumu_manager_path"]:
-            for base in ["C:\\Program Files\\Netease", "C:\\Program Files (x86)\\Netease",
-                         "D:\\E", "E:\\E", 
-                         os.environ.get("ProgramFiles", ""),
-                         os.environ.get("ProgramFiles(x86)", "")]:
-                if not base or not os.path.isdir(base):
-                    continue
-                # 直接搜已知结构
-                for root, dirs, files in os.walk(base):
-                    if "MuMuManager.exe" in files:
-                        results["mumu_manager_path"] = os.path.join(root, "MuMuManager.exe")
-                        break
-                    # 限制搜索深度为 4
-                    depth = root.replace(base, "").count(os.sep)
-                    if depth > 4:
-                        dirs.clear()
-                if results["mumu_manager_path"]:
-                    break
-
-        # 5. 搜常见安装目录找 LDPlayer（注册表没搜到时）
-        if not results["ld_path"]:
-            for base in ["C:\\LDPlayer", "C:\\Program Files\\LDPlayer", "D:\\E\\LDPlayer9",
-                         "C:\\Program Files\\dnplayer-ths"]:
-                if os.path.isdir(base):
-                    results["ld_path"] = base
-                    break
-
-        return results
-
     def _apply_detected_paths(self, detected):
         """应用自动搜索到的模拟器路径到实例变量"""
-        if detected.get("vms_config_dir"):
+        if detected.get("ld_path"):
             self._ld_paths = detected
-            _log_info(f"[DEBUG] 自动搜索到 vms_config_dir: {detected['vms_config_dir']}")
+            self.root.after(0, lambda: self.ld_path_var.set(detected["ld_path"]))
+            self.root.after(0, lambda: self.ld_path_entry.config(fg=TEXT))
+            _log_info(f"[PATH] 自动搜索到 LDPlayer: {detected['ld_path']}")
         if not self._mumu_path and detected.get("mumu_manager_path"):
             self._mumu_path = detected["mumu_manager_path"]
-            _log_info(f"[DEBUG] 自动搜索到 MuMu: {self._mumu_path}")
+            self.root.after(0, lambda: self.mumu_path_var.set(detected["mumu_manager_path"]))
+            self.root.after(0, lambda: self.mumu_path_entry.config(fg=TEXT))
+            _log_info(f"[PATH] 自动搜索到 MuMu: {detected['mumu_manager_path']}")
         # 触发一次实例扫描
         self.root.after(100, self._scan_and_display_instances)
 
@@ -3965,10 +3638,7 @@ class EmulatorShutdownApp:
                         self._mumu_monitors[index] = monitor
                     _log_info(f"MuMu {index} 定时巡检已启动（每{self._mumu_health_interval}分钟）")
                 else:
-                    # 健康检测启动失败，尝试检测卡启动弹窗并自动处理
-                    from ld_instance_manager import auto_restart_stuck_mumu
-                    _log_info(f"MuMu {index} 健康检测启动失败，尝试弹窗检测重启")
-                    auto_restart_stuck_mumu(self._mumu_path, index)
+                    _log_info(f"MuMu {index} 启动失败: {msg}")
             else:
                 from ld_instance_manager import launch_mumu_instance
                 ok, msg = launch_mumu_instance(self._mumu_path, index)
@@ -4009,9 +3679,7 @@ class EmulatorShutdownApp:
                         self._mumu_monitors[idx] = monitor
                     _log_info(f"MuMu {idx} 定时巡检已启动（每{self._mumu_health_interval}分钟）")
                 else:
-                    from ld_instance_manager import auto_restart_stuck_mumu
-                    _log_info(f"MuMu {idx} 健康检测启动失败，尝试弹窗检测重启")
-                    auto_restart_stuck_mumu(self._mumu_path, idx)
+                    _log_info(f"MuMu {idx} 启动失败: {result['message']}")
             else:
                 from ld_instance_manager import launch_mumu_instance
                 ok, msg = launch_mumu_instance(self._mumu_path, idx)

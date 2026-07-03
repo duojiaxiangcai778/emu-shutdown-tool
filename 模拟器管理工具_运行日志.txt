@@ -227,3 +227,19 @@ NoneType: None
 [2026-07-03 14:16:49] 保存快照成功: 已备份 LDPlayer 1 个实例、MuMu 4 个实例
 [2026-07-03 14:17:05] 程序关闭（定时关闭运行中: 0，定时启动运行中: 0）
 [2026-07-03 14:17:05] _save_tasks_config: 关闭=0个 启动=0个
+[2026-07-03 15:05:42] 程序启动，开始加载配置...
+[2026-07-03 15:05:42] 配置加载完成：关闭任务 0 个，启动任务 0 个，健康检测=关
+[2026-07-03 15:05:42] [DEBUG] === _scan_and_display_instances 开始 ===
+[2026-07-03 15:05:42] [DEBUG] vms_cfg = D:\E\LDPlayer9\vms\config
+[2026-07-03 15:05:42] [DEBUG] 调用 scan_instances(D:\E\LDPlayer9\vms\config)
+[2026-07-03 15:05:42] [DEBUG] scan_instances 返回 1 个
+[2026-07-03 15:05:43] [DEBUG] MuMu 扫描: 4 个
+[2026-07-03 15:05:43] 发现 1 个快照，自动恢复最新: 2026-07-03_14-16-49
+[2026-07-03 15:05:43] 快照恢复成功: 已恢复 LDPlayer 1 个实例、MuMu 4 个实例
+[2026-07-03 15:05:43] [DEBUG] === _scan_and_display_instances 开始 ===
+[2026-07-03 15:05:43] [DEBUG] vms_cfg = D:\E\LDPlayer9\vms\config
+[2026-07-03 15:05:43] [DEBUG] 调用 scan_instances(D:\E\LDPlayer9\vms\config)
+[2026-07-03 15:05:43] [DEBUG] scan_instances 返回 1 个
+[2026-07-03 15:05:44] [DEBUG] MuMu 扫描: 4 个
+[2026-07-03 15:05:45] 程序关闭（定时关闭运行中: 0，定时启动运行中: 0）
+[2026-07-03 15:05:45] _save_tasks_config: 关闭=0个 启动=0个
