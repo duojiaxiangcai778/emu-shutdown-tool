@@ -105,7 +105,7 @@ def auto_detect_paths():
 
 
 def _find_ld_from_process():
-    """从运行中的 LDPlayer 进程获取安装路径"""
+    """从运行中的 LDPlayer 进程获取安装路径（优先选含 vms/config 的）"""
     try:
         r = subprocess.run(
             ['wmic', 'process', 'where',
@@ -114,10 +114,17 @@ def _find_ld_from_process():
             capture_output=True, text=True, timeout=10,
             creationflags=subprocess.CREATE_NO_WINDOW
         )
+        candidates = []
         for line in r.stdout.strip().split('\n'):
             line = line.strip()
             if line.lower().endswith(('.exe',)) and os.path.isfile(line):
-                return os.path.dirname(line)
+                candidates.append(os.path.dirname(line))
+        # 优先返回含 vms/config 的路径（正确安装），其次返回第一个
+        for c in candidates:
+            if os.path.isdir(os.path.join(c, "vms", "config")):
+                return c
+        if candidates:
+            return candidates[0]
     except Exception:
         pass
     return None
@@ -800,12 +807,19 @@ def load_tool_config():
 
 
 def save_tool_config(config):
-    """保存工具配置"""
+    """保存工具配置（原子写入：先写.tmp再rename）"""
+    tmp = TOOL_CONFIG_FILE + ".tmp"
     try:
-        with open(TOOL_CONFIG_FILE, 'w', encoding='utf-8') as f:
+        with open(tmp, 'w', encoding='utf-8') as f:
             json.dump(config, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, TOOL_CONFIG_FILE)
         return True
     except Exception:
+        try:
+            if os.path.isfile(tmp):
+                os.remove(tmp)
+        except Exception:
+            pass
         return False
 
 

@@ -1212,6 +1212,7 @@ class EmulatorShutdownApp:
         self._mumu_health_check_enabled = cfg.get("mumu_health_check", False)
         self._mumu_health_interval = cfg.get("mumu_health_interval", 20)  # 默认20分钟
         self._mumu_health_var = tk.BooleanVar(value=self._mumu_health_check_enabled)
+        self._log_refresh_id = None
         self._mumu_monitors = {}
         self._mumu_lock = threading.Lock()  # 多线程访问保护
         _log_info(f"配置加载完成：关闭任务 {len(self.shutdown_tasks)} 个，启动任务 {len(self.launch_tasks)} 个，健康检测={'开' if self._mumu_health_check_enabled else '关'}")
@@ -1418,7 +1419,8 @@ class EmulatorShutdownApp:
                 self.ld_path_entry.config(fg=TEXT)
                 self._ld_placeholder = False
         def _on_ld_focusout(_):
-            self._on_ld_path_enter()
+            if not self._ld_placeholder:
+                self._on_ld_path_enter()
             if not self.ld_path_var.get().strip():
                 self.ld_path_var.set("")
                 self.ld_path_entry.insert(0, "输入路径回车，或点浏览")
@@ -1824,6 +1826,10 @@ class EmulatorShutdownApp:
 
     def _auto_reset_task(self, t, color, status_fg):
         """定时定点模式自动重置到明天（通用逻辑）"""
+        # 先取消旧的 pending after 回调
+        if t.get("auto_reset_id"):
+            try: self.root.after_cancel(t["auto_reset_id"])
+            except Exception: pass
         t["auto_reset_id"] = None
         if not t["enabled"]:
             return
@@ -1845,6 +1851,12 @@ class EmulatorShutdownApp:
         task["enabled"] = en_var.get()
         if not task["enabled"] and task["running"]:
             task["running"] = False
+            # 取消 pending after 回调，防止禁用后仍自动重启
+            for k in ("update_id", "auto_reset_id"):
+                if task.get(k):
+                    try: self.root.after_cancel(task[k])
+                    except Exception: pass
+                    task[k] = None
             task["vars"]["act_btn"].config_bg(color)
             task["vars"]["act_btn"].set_text("▶")
             task["vars"]["st_lbl"].config(text="已禁用", fg=TEXT_LIGHT)
@@ -2251,7 +2263,7 @@ class EmulatorShutdownApp:
         # 直接执行，不再弹确认框
 
         graceful_kill_async(
-            on_done=lambda count, success, fail_count, failed_names, backup_msg, shutdown_executed: self.root.after(0, lambda: self._on_kill_done(
+            on_done=lambda count, success, fail_count, failed_names, backup_msg, shutdown_executed: None if self._destroyed else self.root.after(0, lambda: self._on_kill_done(
                 count, success, fail_count, failed_names, backup_msg, shutdown_executed)),
             do_backup=True,
             do_shutdown=should_shutdown,
@@ -3917,9 +3929,11 @@ class EmulatorShutdownApp:
     def _refresh_log_display(self):
         """刷新右侧日志面板（每秒调用一次）"""
         if not hasattr(self, '_log_text') or not self._log_text.winfo_exists():
+            self._log_refresh_id = None
             return
         try:
-            lines = "".join(_LOG_BUFFER)
+            with _LOG_BUFFER_LOCK:
+                lines = "".join(_LOG_BUFFER)
             self._log_text.configure(state="normal")
             self._log_text.delete("1.0", "end")
             self._log_text.insert("1.0", lines)
@@ -3927,7 +3941,7 @@ class EmulatorShutdownApp:
             self._log_text.configure(state="disabled")
         except Exception:
             pass
-        self.root.after(1000, self._refresh_log_display)
+        self._log_refresh_id = self.root.after(1000, self._refresh_log_display)
 
     # ---------- MuMu 控制 ----------
 
@@ -3973,13 +3987,15 @@ class EmulatorShutdownApp:
             return
         total = len(self._mumu_instances)
         success = [0]
+        success_lock = threading.Lock()
         threads = []
 
         def _launch_one(idx):
             if self._mumu_health_check_enabled:
                 result = launch_mumu_with_health_check(self._mumu_path, idx)
                 if result["success"]:
-                    success[0] += 1
+                    with success_lock:
+                        success[0] += 1
                     from ld_instance_manager import start_mumu_health_monitor
                     monitor = start_mumu_health_monitor(self._mumu_path, idx,
                                                        check_interval=self._mumu_health_interval * 60)
@@ -3994,7 +4010,8 @@ class EmulatorShutdownApp:
                 from ld_instance_manager import launch_mumu_instance
                 ok, msg = launch_mumu_instance(self._mumu_path, idx)
                 if ok:
-                    success[0] += 1
+                    with success_lock:
+                        success[0] += 1
 
         def _work():
             for inst in self._mumu_instances:
@@ -4042,9 +4059,10 @@ class EmulatorShutdownApp:
         def _work():
             total = len(self._instances)
             success = [0]
+            success_lock = threading.Lock()
             threads = []
             for inst in self._instances:
-                t = threading.Thread(target=lambda n=inst['name']: _launch_one(n, dnconsole, success), daemon=True)
+                t = threading.Thread(target=lambda n=inst['name']: _launch_one(n, dnconsole, success, success_lock), daemon=True)
                 t.start()
                 threads.append(t)
                 try:
@@ -4058,10 +4076,11 @@ class EmulatorShutdownApp:
                 "启动完成", f"成功 {success[0]}/{total}"))
             self.root.after(500, self._scan_and_display_instances)
 
-        def _launch_one(name, dnconsole, success):
+        def _launch_one(name, dnconsole, success, lock):
             ok, msg = launch_instance(dnconsole, name)
             if ok:
-                success[0] += 1
+                with lock:
+                    success[0] += 1
 
         threading.Thread(target=_work, daemon=True).start()
 
@@ -4156,6 +4175,10 @@ class EmulatorShutdownApp:
             try: self.root.after_cancel(self.scan_timer_id)
             except Exception: pass
             self.scan_timer_id = None
+        if self._log_refresh_id:
+            try: self.root.after_cancel(self._log_refresh_id)
+            except Exception: pass
+            self._log_refresh_id = None
         _flush_log()
         self.root.destroy()
 
