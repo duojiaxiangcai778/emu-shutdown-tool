@@ -2687,7 +2687,23 @@ class EmulatorShutdownApp:
                         self._mumu_path = _saved.get("mumu_manager_path", "")
                 except Exception:
                     pass
-            # 配置文件也没有 → 启动一次自动搜索（不重复启动）
+            # 配置文件也没有 → 先尝试已知路径兜底
+            if not vms_cfg:
+                for _p in [r"D:\E\LDPlayer9\vms\config", r"D:\E\LDPlayer9\vms"]:
+                    if os.path.isdir(_p):
+                        vms_cfg = _p
+                        self._ld_paths.setdefault("vms_config_dir", vms_cfg)
+                        _log_info(f"[SCAN] 兜底路径: {vms_cfg}")
+                        break
+            if not self._mumu_path:
+                for _p in [r"D:\E\MuMu Player 12\nx_main\MuMuManager.exe",
+                           r"D:\E\MuMu Player 12\MuMuManager.exe",
+                           r"C:\Program Files\Netease\MuMu\nx_main\MuMuManager.exe"]:
+                    if os.path.isfile(_p):
+                        self._mumu_path = _p
+                        _log_info(f"[SCAN] MuMu兜底: {self._mumu_path}")
+                        break
+            # 还找不到 → 启动后台搜索（只启动一次）
             if not vms_cfg and not self._path_search_running:
                 self._path_search_running = True
                 def _search():
@@ -2834,6 +2850,13 @@ class EmulatorShutdownApp:
                         mem_str = f"{mem}M"
                     info_text = f"{cpu}核 {mem_str} Root:{root_mark}"
 
+                    var = tk.BooleanVar(value=False)
+                    cb = tk.Checkbutton(row, variable=var, bg=CARD,
+                                        activebackground=CARD, selectcolor=CARD, width=4,
+                                        command=self._save_auto_launch_instances)
+                    cb.pack(side="left")
+                    self._inst_vars.append((var, inst))
+
                     tk.Label(row, text=display_name, font=("Microsoft YaHei", 9, "bold"),
                              bg=CARD, fg=TEXT, width=18, anchor="w").pack(side="left")
                     tk.Label(row, text=info_text, font=("Consolas", 9),
@@ -2964,10 +2987,17 @@ class EmulatorShutdownApp:
 
         inst_name = selected[0]
         inst = None
+        # 先查 LDPlayer 实例
         for i in self._instances:
             if i['name'] == inst_name:
                 inst = i
                 break
+        # 没找到则查 MuMu 实例（按 index 匹配）
+        if not inst:
+            for i in self._mumu_instances:
+                if str(i.get('index', '')) == inst_name or i.get('name') == inst_name:
+                    inst = i
+                    break
         if not inst:
             return
 
@@ -3623,6 +3653,11 @@ class EmulatorShutdownApp:
             self._log_text.configure(state="disabled")
         except Exception:
             pass
+        # 每 10 秒写入一次文件，避免崩溃丢日志
+        self._log_flush_counter = getattr(self, '_log_flush_counter', 0) + 1
+        if self._log_flush_counter >= 10:
+            self._log_flush_counter = 0
+            _flush_log()
         self._log_refresh_id = self.root.after(1000, self._refresh_log_display)
 
     # ---------- MuMu 控制 ----------

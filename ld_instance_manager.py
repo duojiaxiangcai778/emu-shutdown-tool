@@ -58,7 +58,14 @@ def auto_detect_paths():
         result["multiplayer_path"] = mp_from_proc
         result["dnmultiplayerex"] = os.path.join(mp_from_proc, "dnmultiplayerex.exe")
 
-    # 策略2: 检查 pathconfig.ini（多开器配置）
+    # 策略2: 从 pathconfig.ini 读取 LDPlayer 路径（多开器配置文件，全盘搜索）
+    if not result["ld_path"]:
+        ld_from_pc = _find_ld_from_pathconfig()
+        if ld_from_pc:
+            result["ld_path"] = ld_from_pc
+            result["dnconsole"] = os.path.join(ld_from_pc, "dnconsole.exe")
+
+    # 策略3: 检查 pathconfig.ini（多开器配置）
     if not result["multiplayer_path"]:
         mp = _find_multiplayer_from_pathconfig()
         if mp:
@@ -222,6 +229,30 @@ def _find_ld_from_registry():
                 winreg.CloseKey(key)
             except Exception:
                 pass
+    return None
+
+
+def _find_ld_from_pathconfig():
+    """全盘搜索 pathconfig.ini，读取 player9=xxx 获取 LDPlayer 安装路径"""
+    for drive in _get_all_drives():
+        for root, dirs, files in os.walk(drive):
+            if 'pathconfig.ini' in files:
+                try:
+                    with open(os.path.join(root, 'pathconfig.ini'), 'r', encoding='utf-8') as f:
+                        for line in f:
+                            line = line.strip()
+                            if line.startswith('player') and '=' in line:
+                                path = line.split('=', 1)[1].strip().strip('"\'')
+                                # 尝试拼接 dnconsole.exe 确认
+                                for p in [path, os.path.join(path, 'dnconsole.exe')]:
+                                    if os.path.isfile(os.path.join(path, 'dnconsole.exe')):
+                                        return os.path.normpath(path)
+                except Exception:
+                    pass
+            # 限制深度 5 层
+            depth = root.replace(drive, "").count(os.sep)
+            if depth >= 5:
+                dirs.clear()
     return None
 
 
