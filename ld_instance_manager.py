@@ -513,7 +513,10 @@ def save_snapshot(vms_config_dir, multiplayer_config_dir, snapshot_base_dir, mum
     返回: (快照目录路径, 消息)
     """
     if not vms_config_dir or not os.path.isdir(vms_config_dir):
-        return None, "未找到实例配置目录"
+        # LDPlayer 不可用时只备份 MuMu
+        vms_config_dir = None
+        ld_count = 0
+        _log_error("[SNAP] vms_config_dir 不可用，仅备份 MuMu")
 
     timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
     snap_dir = os.path.join(snapshot_base_dir, timestamp)
@@ -523,18 +526,22 @@ def save_snapshot(vms_config_dir, multiplayer_config_dir, snapshot_base_dir, mum
 
         # ---- 备份 LDPlayer 实例配置 ----
         count = 0
-        for fname in os.listdir(vms_config_dir):
-            if fname.endswith('.config') and fname != 'leidians.config':
-                src = os.path.join(vms_config_dir, fname)
-                shutil.copy2(src, os.path.join(snap_dir, fname))
-                count += 1
-        # 也备份全局配置（不计入实例数）
-        global_cfg = os.path.join(vms_config_dir, 'leidians.config')
-        if os.path.isfile(global_cfg):
-            shutil.copy2(global_cfg, os.path.join(snap_dir, 'leidians.config'))
+        if vms_config_dir:
+            for fname in os.listdir(vms_config_dir):
+                if fname.endswith('.config') and fname != 'leidians.config':
+                    src = os.path.join(vms_config_dir, fname)
+                    shutil.copy2(src, os.path.join(snap_dir, fname))
+                    count += 1
+            # 也备份全局配置（不计入实例数）
+            global_cfg = os.path.join(vms_config_dir, 'leidians.config')
+            if os.path.isfile(global_cfg):
+                shutil.copy2(global_cfg, os.path.join(snap_dir, 'leidians.config'))
         _log_error(f"[SNAP] LDPlayer 实例配置找到 {count} 个")
-        if count == 0:
-            _log_error(f"[SNAP] vms_config_dir 内容: {os.listdir(vms_config_dir)}")
+        if count == 0 and vms_config_dir:
+            try:
+                _log_error(f"[SNAP] vms_config_dir 内容: {os.listdir(vms_config_dir)}")
+            except Exception:
+                pass
 
         # 全局配置已在上面备份，这里不再重复复制
 
@@ -2145,6 +2152,7 @@ def _find_mumu_error_dialog():
     扫描两类：1)标题匹配关键词的顶层窗口 2)标准对话框(#32770)含运行终止/重启文字
     返回: [(hwnd, title), ...] 或 None
     """
+    user32 = ctypes.windll.user32
     result = []
     error_keywords = ["模拟器", "启动失败", "无响应", "重启", "连接超时",
                       "mumu", "emu", "failed", "timeout", "not responding",

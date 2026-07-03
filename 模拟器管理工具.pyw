@@ -2714,7 +2714,7 @@ class EmulatorShutdownApp:
                     finally:
                         self._path_search_running = False
                 threading.Thread(target=_search, daemon=True).start()
-                return  # 等搜索完成后由 _apply_detected_paths 触发刷新
+            # 不 return，继续往下走：MuMu 扫描不依赖 vms_cfg
 
         ld_instances = []
         if vms_cfg:
@@ -3005,6 +3005,10 @@ class EmulatorShutdownApp:
 
     def _open_settings_editor(self, inst):
         """打开设置编辑窗口"""
+        # MuMu 实例没有 settings，暂不支持编辑
+        if 'settings' not in inst or not inst.get('settings'):
+            messagebox.showinfo("提示", "MuMu 实例编辑暂不支持，请通过 MuMu 客户端修改")
+            return
         win = tk.Toplevel(self.root)
         win.title(f"编辑 - {inst['name']}")
         win.geometry("440x500")
