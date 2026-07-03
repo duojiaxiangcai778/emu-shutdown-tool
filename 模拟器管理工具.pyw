@@ -56,6 +56,7 @@ import traceback as _traceback
 
 _LOG_FILE = None
 _LOG_BUFFER = []   # 内存缓冲，关闭时一次性写入
+_LOG_BUFFER_LOCK = threading.Lock()
 
 def _get_log_path():
     global _LOG_FILE
@@ -80,7 +81,8 @@ def _log_error(context, exc_info=None):
         elif isinstance(exc_info, BaseException):
             exc_info = f"{type(exc_info).__name__}: {exc_info}"
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        _LOG_BUFFER.append(f"[{ts}] [{context}]\n{exc_info}\n---\n")
+        with _LOG_BUFFER_LOCK:
+            _LOG_BUFFER.append(f"[{ts}] [{context}]\n{exc_info}\n---\n")
     except Exception:
         pass
 
@@ -89,23 +91,26 @@ def _log_info(msg):
     """记录一般信息到内存缓冲"""
     try:
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        _LOG_BUFFER.append(f"[{ts}] {msg}\n")
+        with _LOG_BUFFER_LOCK:
+            _LOG_BUFFER.append(f"[{ts}] {msg}\n")
     except Exception:
         pass
 
 
 def _flush_log():
     """将缓冲写入日志文件（追加模式），自动控制日志文件大小"""
-    if not _LOG_BUFFER:
-        return
-    try:
-        header = f"\n模拟器管理工具 v4.2 运行日志\n{'=' * 50}\n"
-        content = header + "".join(_LOG_BUFFER)
-        log_path = _get_log_path()
-        # 先追加新内容（原子操作，崩溃不丢数据）
-        with open(log_path, 'a', encoding='utf-8') as f:
-            f.write(content)
+    with _LOG_BUFFER_LOCK:
+        if not _LOG_BUFFER:
+            return
+        content = "".join(_LOG_BUFFER)
         _LOG_BUFFER.clear()
+    try:
+        log_path = _get_log_path()
+        # 仅在文件不存在或为空时写入 header
+        need_header = not os.path.isfile(log_path) or os.path.getsize(log_path) == 0
+        header = f"\n模拟器管理工具 v4.2 运行日志\n{'=' * 50}\n" if need_header else ""
+        with open(log_path, 'a', encoding='utf-8') as f:
+            f.write(header + content)
         # 再检查文件大小，超过 1MB 时截断保留后半段
         if os.path.isfile(log_path) and os.path.getsize(log_path) > 1_048_576:
             with open(log_path, 'r', encoding='utf-8') as f:
@@ -200,17 +205,13 @@ def _force_shutdown_windows(should_restart):
 
     # ----- 方法1: shutdown.exe /f -----
     flag = '/r' if should_restart else '/s'
+    # 方法1只是启动关机命令，不保证生效，继续尝试后续方法确保真正关机
     try:
         subprocess.run(
             ['shutdown', flag, '/t', '0', '/f'],
             capture_output=True, timeout=10,
             creationflags=subprocess.CREATE_NO_WINDOW
         )
-        # 如果成功，等待一下让命令生效
-        time.sleep(2)
-        # 检查是否还在运行（shutdown /a 可以取消说明还没执行）
-        # 实际上 shutdown 命令调度的关机无法被本进程阻塞，这里直接返回
-        return True
     except Exception:
         pass
 
@@ -2650,10 +2651,11 @@ class EmulatorShutdownApp:
             pass
 
     def _save_all_paths(self):
-        """保存 LDPlayer 和 MuMu 路径到配置"""
+        """保存 LDPlayer 和 MuMu 路径到配置（合并而非覆盖）"""
         config = load_tool_config()
+        config.setdefault("paths", {})
         if self._ld_paths:
-            config["paths"] = self._ld_paths
+            config["paths"].update(self._ld_paths)
         if self._mumu_path:
             config["mumu_manager_path"] = self._mumu_path
         save_tool_config(config)
@@ -2845,11 +2847,6 @@ class EmulatorShutdownApp:
 
     def _scan_and_display_instances(self):
         """扫描并同时显示 LDPlayer + MuMu 实例"""
-        # 防止重入：如果已经在扫描，跳过本次
-        if getattr(self, '_scanning', False):
-            _log_error("[DEBUG] 扫描进行中，跳过")
-            return
-        self._scanning = True
         _log_error("[DEBUG] === _scan_and_display_instances 开始 ===")
         # ---- 扫描 LDPlayer 实例 ----
         vms_cfg = self._ld_paths.get("vms_config_dir")
@@ -3042,8 +3039,6 @@ class EmulatorShutdownApp:
 
         if not self._startup_launch_done:
             self.root.after(500, self._auto_launch_on_startup)
-
-        self._scanning = False
 
     def _get_selected_instances(self):
         """获取勾选的实例名列表"""
@@ -4154,6 +4149,8 @@ class EmulatorShutdownApp:
         self._mumu_monitors.clear()
         self._destroyed = True
         for t in self.shutdown_tasks:
+            t["running"] = False
+        for t in self.launch_tasks:
             t["running"] = False
         if self.scan_timer_id:
             try: self.root.after_cancel(self.scan_timer_id)
