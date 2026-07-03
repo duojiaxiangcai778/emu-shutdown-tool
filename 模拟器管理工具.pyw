@@ -76,13 +76,18 @@ def _get_log_path():
 def _log_error(context, exc_info=None):
     """记录错误到内存缓冲，关闭时写入日志文件"""
     try:
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         if exc_info is None:
             exc_info = _traceback.format_exc()
+            if not exc_info or exc_info.strip() == "NoneType: None":
+                exc_info = ""  # 无异常时不要垃圾
         elif isinstance(exc_info, BaseException):
             exc_info = f"{type(exc_info).__name__}: {exc_info}"
-        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with _LOG_BUFFER_LOCK:
-            _LOG_BUFFER.append(f"[{ts}] [{context}]\n{exc_info}\n---\n")
+            if exc_info:
+                _LOG_BUFFER.append(f"[{ts}] [{context}]\n{exc_info}\n---\n")
+            else:
+                _LOG_BUFFER.append(f"[{ts}] [{context}]\n")
     except Exception:
         pass
 
@@ -2676,17 +2681,17 @@ class EmulatorShutdownApp:
     def _validate_ld_path(self, raw_path):
         """验证并保存 LDPlayer 路径"""
         path = raw_path.strip().strip('"').strip("'")
-        _log_error(f"[DEBUG] _validate_ld_path 收到: [{raw_path}] => [{path}]")
+        _log_info(f"[DEBUG] _validate_ld_path 收到: [{raw_path}] => [{path}]")
         if not path:
-            _log_error("[DEBUG] 路径为空")
+            _log_info("[DEBUG] 路径为空")
             return False
         if not os.path.isdir(path):
             _log_error(f"[DEBUG] 目录不存在: {path}")
             return False
         console = _find_ldconsole(path)
-        _log_error(f"[DEBUG] _find_ldconsole 返回: {console}")
+        _log_info(f"[DEBUG] _find_ldconsole 返回: {console}")
         if not console:
-            _log_error("[DEBUG] 没找到命令行工具")
+            _log_info("[DEBUG] 没找到命令行工具")
             return False
         paths = {
             "ld_path": path,
@@ -2698,7 +2703,7 @@ class EmulatorShutdownApp:
         vms = os.path.join(path, "vms", "config")
         if os.path.isdir(vms):
             paths["vms_config_dir"] = vms
-            _log_error(f"[DEBUG] vms_config_dir = {vms}")
+            _log_info(f"[DEBUG] vms_config_dir = {vms}")
         else:
             _log_error(f"[DEBUG] vms/config 目录不存在: {vms}")
         mp = os.path.join(os.path.dirname(path), "ldmutiplayer")
@@ -2714,10 +2719,10 @@ class EmulatorShutdownApp:
         self.ld_path_var.set(path)
         self.ld_path_entry.config(fg=TEXT)
         self._save_all_paths()
-        _log_error("[DEBUG] 路径保存成功，准备刷新实例")
+        _log_info("[DEBUG] 路径保存成功，准备刷新实例")
         try:
             self._scan_and_display_instances()
-            _log_error("[DEBUG] 刷新实例完成")
+            _log_info("[DEBUG] 刷新实例完成")
         except Exception as e:
             _log_error(f"[DEBUG] 刷新实例异常: {e}")
         return True
@@ -2860,7 +2865,7 @@ class EmulatorShutdownApp:
 
     def _scan_and_display_instances(self):
         """扫描并同时显示 LDPlayer + MuMu 实例"""
-        _log_error("[DEBUG] === _scan_and_display_instances 开始 ===")
+        _log_info("[DEBUG] === _scan_and_display_instances 开始 ===")
         # ---- 扫描 LDPlayer 实例 ----
         vms_cfg = self._ld_paths.get("vms_config_dir")
         # 从配置文件读 vms_cfg（搜索多个可能的位置）
@@ -2868,7 +2873,7 @@ class EmulatorShutdownApp:
             # 先找配置文件
             _cfg_path = self._find_config_file()
             if _cfg_path:
-                _log_error(f"[DEBUG] 找到配置文件: {_cfg_path}")
+                _log_info(f"[DEBUG] 找到配置文件: {_cfg_path}")
                 try:
                     with open(_cfg_path, 'r', encoding='utf-8') as _f:
                         _saved = json.load(_f)
@@ -2879,33 +2884,33 @@ class EmulatorShutdownApp:
                     _log_error(f"[DEBUG] 读取配置文件失败: {type(_e).__name__}: {_e}")
             # 配置文件也没有 → 自动搜索注册表/快捷方式/磁盘
             if not vms_cfg:
-                _log_error("[DEBUG] 配置文件无路径，开始自动搜索模拟器...")
+                _log_info("[DEBUG] 配置文件无路径，开始自动搜索模拟器...")
                 # 在后台线程搜索，不阻塞 UI
                 def _search():
                     detected = self._auto_detect_paths()
                     self.root.after(0, lambda: self._apply_detected_paths(detected))
                 threading.Thread(target=_search, daemon=True).start()
-            _log_error(f"[DEBUG] vms_cfg = {vms_cfg}")
-        _log_error(f"[DEBUG] vms_cfg = {vms_cfg}")
+            _log_info(f"[DEBUG] vms_cfg = {vms_cfg}")
+        _log_info(f"[DEBUG] vms_cfg = {vms_cfg}")
 
         ld_instances = []
         if vms_cfg:
-            _log_error(f"[DEBUG] 调用 scan_instances({vms_cfg})")
+            _log_info(f"[DEBUG] 调用 scan_instances({vms_cfg})")
             ld_instances = scan_instances(vms_cfg)
-            _log_error(f"[DEBUG] scan_instances 返回 {len(ld_instances)} 个")
+            _log_info(f"[DEBUG] scan_instances 返回 {len(ld_instances)} 个")
             dnconsole = self._ld_paths.get("dnconsole")
             check_running_instances(ld_instances, dnconsole)
         else:
-            _log_error("[DEBUG] vms_cfg 为空，不扫描")
+            _log_info("[DEBUG] vms_cfg 为空，不扫描")
         self._instances = ld_instances
 
         # ---- 扫描 MuMu 实例 ----
         mumu_instances = []
         if self._mumu_path and os.path.isfile(self._mumu_path):
             mumu_instances = scan_mumu_instances(self._mumu_path)
-            _log_error(f"[DEBUG] MuMu 扫描: {len(mumu_instances)} 个")
+            _log_info(f"[DEBUG] MuMu 扫描: {len(mumu_instances)} 个")
         else:
-            _log_error(f"[DEBUG] MuMu 跳过: path={self._mumu_path} exist={self._mumu_path and os.path.isfile(self._mumu_path)}")
+            _log_info(f"[DEBUG] MuMu 跳过: path={self._mumu_path} exist={self._mumu_path and os.path.isfile(self._mumu_path)}")
         self._mumu_instances = mumu_instances
 
         # ---- 清空旧行 ----
@@ -3331,7 +3336,7 @@ class EmulatorShutdownApp:
                     if not self._mumu_path:
                         self._mumu_path = _saved.get("mumu_manager_path", "")
                 except Exception as _e:
-                    _log_error(f"[DEBUG] 保存快照读取配置失败: {type(_e).__name__}: {_e}")
+                    _log_info(f"[DEBUG] 保存快照读取配置失败: {type(_e).__name__}: {_e}")
             # 配置文件也没有 → 自动搜索
             if not vms_cfg or not mp:
                 detected = self._auto_detect_paths()
@@ -3341,7 +3346,7 @@ class EmulatorShutdownApp:
                     mp = detected["multiplayer_path"]
                 if not self._mumu_path and detected.get("mumu_manager_path"):
                     self._mumu_path = detected["mumu_manager_path"]
-                _log_error(f"[DEBUG] 保存快照自动搜索: vms={vms_cfg} mp={mp} mumu={self._mumu_path}")
+                _log_info(f"[DEBUG] 保存快照自动搜索: vms={vms_cfg} mp={mp} mumu={self._mumu_path}")
         if mp:
             mp_cfg = os.path.join(mp, "vms", "config")
 
@@ -3901,10 +3906,10 @@ class EmulatorShutdownApp:
         """应用自动搜索到的模拟器路径到实例变量"""
         if detected.get("vms_config_dir"):
             self._ld_paths = detected
-            _log_error(f"[DEBUG] 自动搜索到 vms_config_dir: {detected['vms_config_dir']}")
+            _log_info(f"[DEBUG] 自动搜索到 vms_config_dir: {detected['vms_config_dir']}")
         if not self._mumu_path and detected.get("mumu_manager_path"):
             self._mumu_path = detected["mumu_manager_path"]
-            _log_error(f"[DEBUG] 自动搜索到 MuMu: {self._mumu_path}")
+            _log_info(f"[DEBUG] 自动搜索到 MuMu: {self._mumu_path}")
         # 触发一次实例扫描
         self.root.after(100, self._scan_and_display_instances)
 

@@ -2162,7 +2162,7 @@ def _click_dialog_button(dialog_hwnd):
         if child:
             win32 = ctypes.windll.user32
             win32.SendMessageW(child, 0x00F5, 0, 0)
-            _log_error("[MUMU_DIALOG] 点击第一个按钮")
+            _log_info("[MUMU_DIALOG] 点击第一个按钮")
             return True
     except Exception:
         pass
