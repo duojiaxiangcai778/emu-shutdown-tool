@@ -3047,12 +3047,96 @@ class EmulatorShutdownApp:
 
     def _open_settings_editor(self, inst):
         """打开设置编辑窗口"""
-        # 判断实例类型：MuMu 实例没有 settings/config_path，暂不支持编辑
+        # MuMu 实例：从 vm_config.json 读取/写入
         is_mumu = ('settings' not in inst or not inst.get('settings')
                    or 'config_path' not in inst or not inst.get('config_path'))
         if is_mumu:
-            messagebox.showinfo("提示", "MuMu 实例编辑暂不支持，请通过 MuMu 客户端修改")
+            # 定位 vm_config.json
+            vm_cfg_path = None
+            if self._mumu_path:
+                mgr_dir = os.path.dirname(self._mumu_path)
+                install_dir = os.path.dirname(mgr_dir)
+                ud = os.path.expanduser("~\\Documents")
+                for d in [os.path.join(install_dir, "vms"),
+                          os.path.join(ud, "MuMu12", "vms"),
+                          os.path.join(ud, "MuMuPlayer-12.0", "vms")]:
+                    p = os.path.join(d, f"MuMuPlayer-12.0-{inst['index']}", "configs", "vm_config.json")
+                    if os.path.isfile(p):
+                        vm_cfg_path = p; break
+            if not vm_cfg_path:
+                messagebox.showinfo("提示", "找不到 MuMu 实例配置文件")
+                return
+            try:
+                with open(vm_cfg_path, 'r', encoding='utf-8') as f:
+                    vm = json.load(f).get("vm", {})
+            except Exception as e:
+                messagebox.showerror("错误", f"读取配置失败: {e}")
+                return
+
+            win = tk.Toplevel(self.root)
+            win.title(f"MuMu-{inst['index']} {inst['name']}")
+            win.geometry("380x300")
+            win.configure(bg=BG)
+            win.transient(self.root)
+            win.grab_set()
+
+            tk.Label(win, text=f"MuMu-{inst['index']} {inst['name']}", font=self.f_sec,
+                     bg=BG, fg=TEXT).pack(pady=(12, 8))
+
+            form = tk.Frame(win, bg=BG, padx=20)
+            form.pack(fill="x")
+
+            # CPU
+            tk.Label(form, text="CPU核心:", font=("Microsoft YaHei", 10),
+                     bg=BG, fg=TEXT, width=10, anchor="w").grid(row=0, column=0, pady=4, sticky="w")
+            cpu_var = tk.StringVar(value=str(vm.get("cpu", "2")))
+            tk.Spinbox(form, from_=1, to=16, textvariable=cpu_var, width=8,
+                       font=("Consolas", 10), bg=BG_LIGHT, fg=TEXT).grid(row=0, column=1, pady=4, sticky="w")
+
+            # 内存
+            tk.Label(form, text="内存(MB):", font=("Microsoft YaHei", 10),
+                     bg=BG, fg=TEXT, width=10, anchor="w").grid(row=1, column=0, pady=4, sticky="w")
+            mem_var = tk.StringVar(value=str(vm.get("memory", "2048")))
+            tk.Spinbox(form, from_=256, to=16384, increment=256, textvariable=mem_var, width=8,
+                       font=("Consolas", 10), bg=BG_LIGHT, fg=TEXT).grid(row=1, column=1, pady=4, sticky="w")
+
+            # Root
+            root_var = tk.BooleanVar(value=str(vm.get("root", "false")).lower() == "true")
+            tk.Checkbutton(form, text="Root 权限", variable=root_var,
+                           font=("Microsoft YaHei", 10), bg=BG, fg=TEXT,
+                           selectcolor=CARD, activebackground=BG
+                           ).grid(row=2, column=0, columnspan=2, pady=4, sticky="w")
+
+            def _save_mumu():
+                if inst['running']:
+                    messagebox.showwarning("警告", "实例正在运行，请先关闭再修改")
+                    return
+                try:
+                    with open(vm_cfg_path, 'r', encoding='utf-8') as f:
+                        cfg = json.load(f)
+                    cfg["vm"] = cfg.get("vm", {})
+                    cfg["vm"]["cpu"] = int(cpu_var.get())
+                    cfg["vm"]["memory"] = int(mem_var.get())
+                    cfg["vm"]["root"] = "true" if root_var.get() else "false"
+                    with open(vm_cfg_path, 'w', encoding='utf-8') as f:
+                        json.dump(cfg, f, ensure_ascii=False, indent=2)
+                    messagebox.showinfo("成功", f"MuMu-{inst['index']} 设置已保存")
+                    win.destroy()
+                    self._scan_and_display_instances()
+                except Exception as e:
+                    messagebox.showerror("错误", f"保存失败: {e}")
+
+            btn_frame = tk.Frame(win, bg=BG)
+            btn_frame.pack(fill="x", padx=20, pady=12)
+            RoundedButton(btn_frame, text="保存", command=_save_mumu,
+                          bg=GREEN, fg="white", font=("Microsoft YaHei", 10, "bold"),
+                          padx=16).pack(side="left", padx=(0, 8))
+            RoundedButton(btn_frame, text="取消", command=win.destroy,
+                          bg=TEXT_LIGHT, fg="white", font=("Microsoft YaHei", 10),
+                          padx=16).pack(side="left")
             return
+
+        # LDPlayer 实例编辑（原有逻辑）
         win = tk.Toplevel(self.root)
         win.title(f"编辑 - {inst['name']}")
         win.geometry("440x500")
