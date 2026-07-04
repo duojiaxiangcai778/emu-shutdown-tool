@@ -144,7 +144,7 @@ def _find_ld_from_process():
         if candidates:
             return candidates[0]
     except Exception as _e:
-        _log_error("[CLN]", _e)
+        pass
     return None
 
 
@@ -162,7 +162,7 @@ def _find_multiplayer_from_process():
             if line.lower().endswith(('.exe',)) and os.path.isfile(line):
                 return os.path.dirname(line)
     except Exception as _e:
-        _log_error("[CLN]", _e)
+        pass
     return None
 
 
@@ -192,7 +192,7 @@ def _find_multiplayer_from_pathconfig():
                                 # 直接返回 LDPlayer 路径（多开器可能在同一个目录）
                                 return val
                 except Exception as _e:
-                    _log_error("[CLN]", _e)
+                    pass
                     continue
     return None
 
@@ -214,7 +214,7 @@ def _find_ld_from_registry():
         try:
             key = winreg.OpenKey(hkey, subkey, 0, winreg.KEY_READ)
         except Exception as _e:
-            _log_error("[CLN]", _e)
+            pass
             continue
         try:
             for val_name in ['InstallPath', 'Path', 'InstallDir', '']:
@@ -228,7 +228,7 @@ def _find_ld_from_registry():
             try:
                 winreg.CloseKey(key)
             except Exception as _e:
-                _log_error("[CLN]", _e)
+                pass
     return None
 
 
@@ -248,7 +248,7 @@ def _find_ld_from_pathconfig():
                                     if os.path.isfile(os.path.join(path, 'dnconsole.exe')):
                                         return os.path.normpath(path)
                 except Exception as _e:
-                    _log_error("[CLN]", _e)
+                    pass
             # 限制深度 5 层
             depth = root.replace(drive, "").count(os.sep)
             if depth >= 5:
@@ -284,7 +284,7 @@ def _find_multiplayer_nearby(parent_dir):
                 if os.path.isdir(sub) and os.path.isfile(os.path.join(sub, 'dnmultiplayerex.exe')):
                     return sub
         except Exception as _e:
-            _log_error("[CLN]", _e)
+            pass
     return None
 
 
@@ -357,7 +357,7 @@ def _scan_config_files(config_dir, instances):
                     "running": False,
                 })
     except Exception as _e:
-        _log_error("[CLN]", _e)
+        pass
 
 
 def _scan_instance_dirs(vms_dir, instances):
@@ -392,7 +392,7 @@ def _scan_instance_dirs(vms_dir, instances):
                 "running": False,
             })
     except Exception as _e:
-        _log_error("[CLN]", _e)
+        pass
 
 
 def check_running_instances(instances, dnconsole_path=None):
@@ -440,7 +440,7 @@ def check_running_instances(instances, dnconsole_path=None):
                         inst['running'] = inst['name'] in running_names
                     return
         except Exception as _e:
-            _log_error("[CLN]", _e)
+            pass
 
     # 回退方式: wmic 通过命令行检测
     try:
@@ -458,7 +458,7 @@ def check_running_instances(instances, dnconsole_path=None):
                 if re.search(r'(?<![a-zA-Z0-9])' + re.escape(name) + r'(?![a-zA-Z0-9])', line):
                     running_names.add(name)
     except Exception as _e:
-        _log_error("[CLN]", _e)
+        pass
 
     for inst in instances:
         inst['running'] = inst['name'] in running_names
@@ -539,7 +539,7 @@ def save_snapshot(vms_config_dir, multiplayer_config_dir, snapshot_base_dir, mum
             try:
                 _log_error(f"[SNAP] vms_config_dir 内容: {os.listdir(vms_config_dir)}")
             except Exception as _e:
-                _log_error("[CLN]", _e)
+                pass
 
         # 全局配置已在上面备份，这里不再重复复制
 
@@ -558,7 +558,7 @@ def save_snapshot(vms_config_dir, multiplayer_config_dir, snapshot_base_dir, mum
                         shutil.copy2(cfg_src, os.path.join(mumu_snap, f"{entry}.json"))
                         mumu_count += 1
                     except Exception as _e:
-                        _log_error("[CLN]", _e)
+                        pass
 
         # 写入元信息
         meta = {
@@ -655,7 +655,7 @@ def list_snapshots(snapshot_base_dir):
                     with open(meta_path, 'r', encoding='utf-8') as f:
                         meta = json.load(f)
                 except Exception as _e:
-                    _log_error("[CLN]", _e)
+                    pass
             ld_cnt = meta.get("ldplayer_count")
             if ld_cnt is None:
                 ld_cnt = meta.get("instance_count", 0)
@@ -836,7 +836,7 @@ def _ensure_snapshot_dir():
     try:
         os.makedirs(SNAPSHOT_DIR, exist_ok=True)
     except Exception as _e:
-        _log_error("[CLN]", _e)
+        pass
 
 _ensure_snapshot_dir()
 
@@ -848,7 +848,7 @@ def load_tool_config():
             with open(TOOL_CONFIG_FILE, 'r', encoding='utf-8') as f:
                 return json.load(f)
     except Exception as _e:
-        _log_error("[CLN]", _e)
+        pass
     return {}
 
 
@@ -865,7 +865,7 @@ def save_tool_config(config):
             if os.path.isfile(tmp):
                 os.remove(tmp)
         except Exception as _e:
-            _log_error("[CLN]", _e)
+            pass
         return False
 
 
@@ -937,7 +937,7 @@ def check_windows_feature(feature_name):
                 "raw": out,
             }
     except Exception as _e:
-        _log_error("[CLN]", _e)
+        pass
     return {"name": feature_name, "label": feature_name, "enabled": None, "raw": ""}
 
 
@@ -977,7 +977,7 @@ def _check_virtualization_based_security():
             except ValueError:
                 pass
     except Exception as _e:
-        _log_error("[CLN]", _e)
+        pass
     return {"name": "VirtualizationBasedSecurity", "label": "VBS", "enabled": None, "raw": ""}
 
 
@@ -992,7 +992,7 @@ def check_virtualization_cpu():
             enabled = "True" in out
             return {"name": "CPU_VTx", "label": "CPU 虚拟化 (VT-x/AMD-V)", "enabled": enabled, "raw": out.strip()}
     except Exception as _e:
-        _log_error("[CLN]", _e)
+        pass
     return {"name": "CPU_VTx", "label": "CPU 虚拟化 (VT-x/AMD-V)", "enabled": None, "raw": ""}
 
 
@@ -1041,7 +1041,7 @@ def check_ldplayer_hyperv_version():
                 if "hyperv" in content.lower():
                     return {"version": "hyperv", "detail": "Hyper-V 兼容版（配置含 hyperv 标识）"}
             except Exception as _e:
-                _log_error("[CLN]", _e)
+                pass
         return {"version": "standard", "detail": "疑似标准版（默认判断）"}
 
 
@@ -1256,7 +1256,7 @@ def _log_error(context, exc_info=None):
         with open(log_path, 'a', encoding='utf-8') as f:
             f.write(f"[{ts}] [{context}]\n{exc_info}\n---\n")
     except Exception as _e:
-        _log_error("[CLN]", _e)
+        pass
 
 # 常见 MuMu 安装路径
 MUMU_PATHS_CANDIDATES = [
@@ -1306,7 +1306,7 @@ def auto_detect_mumu():
                 result["found"] = True
                 return result
     except Exception as _e:
-        _log_error("[CLN]", _e)
+        pass
     # wmic 备用
     try:
         r = subprocess.run(
@@ -1322,7 +1322,7 @@ def auto_detect_mumu():
                 result["found"] = True
                 return result
     except Exception as _e:
-        _log_error("[CLN]", _e)
+        pass
 
     # 1c. 从注册表搜索
     reg_paths = [
@@ -1340,7 +1340,7 @@ def auto_detect_mumu():
         try:
             key = winreg.OpenKey(hkey, subkey, 0, winreg.KEY_READ)
         except Exception as _e:
-            _log_error("[CLN]", _e)
+            pass
             continue
         try:
             for val_name in ['InstallPath', 'Path', 'InstallDir', '']:
@@ -1373,7 +1373,7 @@ def auto_detect_mumu():
             try:
                 winreg.CloseKey(key)
             except Exception as _e:
-                _log_error("[CLN]", _e)
+                pass
 
     # 2. 遍历所有盘符搜索 MuMuManager.exe（不预设目录名，覆盖任意安装路径）
     for drive in _get_all_drives():
@@ -1469,11 +1469,11 @@ def scan_mumu_instances(mumu_manager_path):
             try:
                 if os.path.isfile(bat_path): os.unlink(bat_path)
             except Exception as _e:
-                _log_error("[CLN]", _e)
+                pass
             try:
                 if os.path.isfile(out_file): os.unlink(out_file)
             except Exception as _e:
-                _log_error("[CLN]", _e)
+                pass
 
         return None
 
@@ -1508,7 +1508,7 @@ def scan_mumu_instances(mumu_manager_path):
                                 inst["memory"] = vm.get("memory", "?")
                                 inst["root"] = vm.get("root", "").lower() == "true"
                         except Exception as _e:
-                            _log_error("[CLN]", _e)
+                            pass
                         break
             return instances
     except Exception as e:
@@ -1538,7 +1538,7 @@ def scan_mumu_instances(mumu_manager_path):
             try:
                 idx = entry.split("-")[-1]
             except Exception as _e:
-                _log_error("[CLN]", _e)
+                pass
                 continue
             if idx in seen_indices:
                 continue
@@ -1551,7 +1551,7 @@ def scan_mumu_instances(mumu_manager_path):
                     with open(cfg_path, 'r', encoding='utf-8') as f:
                         vm_cfg = json.load(f)
                 except Exception as _e:
-                    _log_error("[CLN]", _e)
+                    pass
             vm = vm_cfg.get("vm", {})
             instances.append({
                 "index": idx,
@@ -1624,7 +1624,7 @@ def _auto_detect_mumu_path():
             if line.lower().endswith('mumumanager.exe') and os.path.isfile(line):
                 return line
     except Exception as _e:
-        _log_error("[CLN]", _e)
+        pass
     info = auto_detect_mumu()
     return info.get("manager_path")
 
@@ -1746,7 +1746,7 @@ def check_mumu_boot_completed(index, timeout=30):
         except subprocess.TimeoutExpired:
             pass
         except Exception as _e:
-            _log_error("[CLN]", _e)
+            pass
 
         time.sleep(interval)
         elapsed += interval
@@ -1807,7 +1807,7 @@ def wait_mumu_ready(mumu_manager_path, index, timeout=180, check_interval=5):
                     process_found = True
                     break
         except Exception as _e:
-            _log_error("[CLN]", _e)
+            pass
 
         if not process_found:
             stage = "process_not_found"
@@ -1836,7 +1836,7 @@ def wait_mumu_ready(mumu_manager_path, index, timeout=180, check_interval=5):
                         "stage": "ready",
                     }
             except Exception as _e:
-                _log_error("[CLN]", _e)
+                pass
 
     return {
         "success": False,
@@ -1966,7 +1966,7 @@ def _resolve_lnk_targets_batch(lnk_paths):
                     if target:
                         results[lnk] = target
     except Exception as _e:
-        _log_error("[CLN]", _e)
+        pass
     return results
 
 
@@ -2214,7 +2214,7 @@ def _find_mumu_error_dialog():
     try:
         user32.EnumWindows(_enum_callback, 0)
     except Exception as _e:
-        _log_error("[CLN]", _e)
+        pass
     return result if result else None
 
 
