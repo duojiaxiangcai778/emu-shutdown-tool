@@ -1433,7 +1433,7 @@ def scan_mumu_instances(mumu_manager_path):
             raw = (r.stdout or b"").decode('utf-8', errors='replace').strip()
             if raw:
                 return json.loads(raw)
-        except Exception:
+        except Exception:  # noqa: S110 — expected: fallback to next attempt
             pass  # fallback to B
 
         # 尝试 B：cmd /c 中转
@@ -1446,8 +1446,8 @@ def scan_mumu_instances(mumu_manager_path):
             raw = (r.stdout or b"").decode('utf-8', errors='replace').strip()
             if raw:
                 return json.loads(raw)
-        except Exception:
-            pass  # fallback to C
+        except Exception:  # noqa: S110 — expected: fallback to next attempt
+            pass
 
         # 尝试 C：临时 bat 文件 > stdout 重定向
         out_file = os.path.join(tempfile.gettempdir(), f"_mumu_scan_{os.getpid()}.txt")
@@ -1463,7 +1463,7 @@ def scan_mumu_instances(mumu_manager_path):
                     raw = f.read().strip()
                 if raw:
                     return json.loads(raw)
-        except Exception:
+        except Exception:  # noqa: S110 — expected: all 3 attempts failed, disk scan fallback
             pass  # all 3 exhausted
         finally:
             try:
