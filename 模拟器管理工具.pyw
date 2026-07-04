@@ -1894,15 +1894,18 @@ class EmulatorShutdownApp:
                 except Exception as _e:
                     _log_error("[CLN]", _e)
                 t["auto_reset_id"] = None
-            # 停止 MuMu 健康巡检
-            for m in (t.get("_mumu_monitors") or {}).values():
-                stop_mumu_health_monitor(m)
-            t["_mumu_monitors"] = {}
             if t["running"]:
                 t["running"] = False
                 t["vars"]["act_btn"].config_bg(color)
                 t["vars"]["act_btn"].set_text("▶")
                 t["vars"]["st_lbl"].config(text="已停止", fg=TEXT_LIGHT)
+        # 停止所有 MuMu 健康巡检（使用全局字典，不是 task 级空字典）
+        from ld_instance_manager import stop_mumu_health_monitor
+        with self._mumu_lock:
+            monitors = dict(self._mumu_monitors)
+            self._mumu_monitors.clear()
+        for m in monitors.values():
+            stop_mumu_health_monitor(m)
         self._save_tasks_config()
 
     # ---------- 任务组件（使用共享逻辑） ----------
@@ -2110,8 +2113,15 @@ class EmulatorShutdownApp:
         def _delete():
             if task["running"]:
                 _stop()
-            for m in (task.get("_mumu_monitors") or {}).values():
-                stop_mumu_health_monitor(m)
+            # 停止该任务关联的 MuMu 健康巡检（用全局字典，不是 task 级空字典）
+            from ld_instance_manager import stop_mumu_health_monitor
+            with self._mumu_lock:
+                for k in list(self._mumu_monitors.keys()):
+                    mumu_key = f"mumu_{k}"
+                    if mumu_key in task.get("instances", []):
+                        m = self._mumu_monitors.pop(k, None)
+                        if m:
+                            stop_mumu_health_monitor(m)
             task["_mumu_monitors"] = {}
             task["frame"].destroy()
             for i, t in enumerate(self.launch_tasks):
