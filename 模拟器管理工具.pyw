@@ -2870,7 +2870,7 @@ class EmulatorShutdownApp:
                         mem_str = f"{mem}M"
                     info_text = f"{cpu}核 {mem_str} Root:{root_mark}"
 
-                    var = tk.BooleanVar(value=False)
+                    var = tk.BooleanVar(value=inst['name'] in self._auto_launch_instances)
                     cb = tk.Checkbutton(row, variable=var, bg=CARD,
                                         activebackground=CARD, selectcolor=CARD, width=4,
                                         command=self._save_auto_launch_instances)
@@ -2932,13 +2932,14 @@ class EmulatorShutdownApp:
             return
         if not self._auto_launch_instances:
             return
-        dnconsole = self._ld_paths.get("dnconsole")
-        if not dnconsole or not os.path.isfile(dnconsole):
-            return
 
-        selected = [name for name in self._auto_launch_instances
-                    if any(inst['name'] == name for inst in self._instances)]
-        if not selected:
+        # 分离 LDPlayer 和 MuMu 实例
+        selected_ld = [name for name in self._auto_launch_instances
+                       if any(inst['name'] == name for inst in self._instances)]
+        selected_mumu = [name for name in self._auto_launch_instances
+                         if any(inst['name'] == name for inst in self._mumu_instances)]
+
+        if not selected_ld and not selected_mumu:
             return
 
         try:
@@ -2947,48 +2948,68 @@ class EmulatorShutdownApp:
             interval = 5
 
         def _work():
-            vms_cfg = self._ld_paths.get("vms_config_dir")
-            if vms_cfg and os.path.isdir(vms_cfg):
-                # 检查所有勾选实例的配置文件是否完好
-                config_ok = True
-                for name in selected:
-                    cfg_path = os.path.join(vms_cfg, f"{name}.config")
-                    if not os.path.isfile(cfg_path):
-                        config_ok = False
-                        break
-                    try:
-                        with open(cfg_path, 'r', encoding='utf-8') as f:
-                            cfg = json.load(f)
-                        if not cfg or not isinstance(cfg, dict):
-                            config_ok = False
+            # ---- LDPlayer 自启动 ----
+            if selected_ld:
+                dnconsole = self._ld_paths.get("dnconsole")
+                if dnconsole and os.path.isfile(dnconsole):
+                    vms_cfg = self._ld_paths.get("vms_config_dir")
+                    if vms_cfg and os.path.isdir(vms_cfg):
+                        # 检查所有勾选实例的配置文件是否完好
+                        config_ok = True
+                        for name in selected_ld:
+                            cfg_path = os.path.join(vms_cfg, f"{name}.config")
+                            if not os.path.isfile(cfg_path):
+                                config_ok = False
+                                break
+                            try:
+                                with open(cfg_path, 'r', encoding='utf-8') as f:
+                                    cfg = json.load(f)
+                                if not cfg or not isinstance(cfg, dict):
+                                    config_ok = False
+                                    break
+                            except Exception:
+                                config_ok = False
+                                break
+
+                        if not config_ok:
+                            self.root.after(0, lambda: self.launch_status_var.set("配置异常，正在从快照恢复..."))
+                            mp_cfg = None
+                            mp = self._ld_paths.get("multiplayer_path")
+                            if mp:
+                                mp_cfg = os.path.join(mp, "vms", "config")
+                            snapshots = list_snapshots(SNAPSHOT_DIR)
+                            if snapshots:
+                                latest = snapshots[0]
+                                count, msg = restore_snapshot(latest['path'], vms_cfg, mp_cfg, mumu_vms_dir=self._get_mumu_vms_dir())
+                                self.root.after(0, lambda s=msg: self.launch_status_var.set(f"已恢复: {s}"))
+                                time.sleep(1)
+                        else:
+                            self.root.after(0, lambda: self.launch_status_var.set("配置正常，跳过恢复"))
+
+                    self.root.after(0, lambda: self.launch_status_var.set(f"正在启动 {len(selected_ld)} 个实例..."))
+                    results = staggered_launch(
+                        dnconsole, selected_ld, interval,
+                        on_status=lambda t: self.root.after(0, lambda: self.launch_status_var.set(t)),
+                    )
+                    ok = sum(1 for _, s, _ in results if s)
+                    self.root.after(0, lambda: self.launch_status_var.set(f"自启动完成 {ok}/{len(results)}"))
+
+            # ---- MuMu 自启动 ----
+            if selected_mumu:
+                from ld_instance_manager import launch_mumu_instance
+                self.root.after(0, lambda: self.launch_status_var.set(f"正在启动 {len(selected_mumu)} 个 MuMu 实例..."))
+                ok = 0
+                for name in selected_mumu:
+                    for inst in self._mumu_instances:
+                        if inst.get('name') == name:
+                            idx = inst['index']
+                            result = launch_mumu_instance(self._mumu_path, idx)
+                            if result:
+                                ok += 1
                             break
-                    except Exception:
-                        config_ok = False
-                        break
+                    time.sleep(interval)
+                self.root.after(0, lambda: self.launch_status_var.set(f"MuMu 自启动完成 {ok}/{len(selected_mumu)}"))
 
-                if not config_ok:
-                    # 配置文件损坏或丢失，从快照恢复
-                    self.root.after(0, lambda: self.launch_status_var.set("配置异常，正在从快照恢复..."))
-                    mp_cfg = None
-                    mp = self._ld_paths.get("multiplayer_path")
-                    if mp:
-                        mp_cfg = os.path.join(mp, "vms", "config")
-                    snapshots = list_snapshots(SNAPSHOT_DIR)
-                    if snapshots:
-                        latest = snapshots[0]
-                        count, msg = restore_snapshot(latest['path'], vms_cfg, mp_cfg, mumu_vms_dir=self._get_mumu_vms_dir())
-                        self.root.after(0, lambda s=msg: self.launch_status_var.set(f"已恢复: {s}"))
-                        time.sleep(1)
-                else:
-                    self.root.after(0, lambda: self.launch_status_var.set("配置正常，跳过恢复"))
-
-            self.root.after(0, lambda: self.launch_status_var.set(f"正在启动 {len(selected)} 个实例..."))
-            results = staggered_launch(
-                dnconsole, selected, interval,
-                on_status=lambda t: self.root.after(0, lambda: self.launch_status_var.set(t)),
-            )
-            ok = sum(1 for _, s, _ in results if s)
-            self.root.after(0, lambda: self.launch_status_var.set(f"自启动完成 {ok}/{len(results)}"))
             self.root.after(0, self._scan_and_display_instances)
 
         threading.Thread(target=_work, daemon=True).start()
