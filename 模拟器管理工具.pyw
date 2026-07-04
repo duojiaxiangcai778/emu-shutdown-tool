@@ -2746,7 +2746,8 @@ class EmulatorShutdownApp:
             mumu_instances = scan_mumu_instances(self._mumu_path)
         self._mumu_instances = mumu_instances
 
-        # ---- 清空旧行 ----
+        # ---- 无闪烁重建：隐藏→重建→显示 ----
+        self.inst_rows_frame.pack_forget()
         for w in self.inst_rows_frame.winfo_children():
             w.destroy()
 
@@ -2897,6 +2898,8 @@ class EmulatorShutdownApp:
 
             # 更新路径显示 — 状态信息直接看实例列表，不额外显示
             pass
+
+        self.inst_rows_frame.pack(fill="x")
 
         if not self._startup_launch_done:
             self.root.after(500, self._auto_launch_on_startup)
