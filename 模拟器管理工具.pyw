@@ -48,7 +48,6 @@ from ld_instance_manager import (
     scan_mumu_instances,
     shutdown_mumu_instance,
     staggered_launch,
-    stop_mumu_health_monitor,
     write_instance_config,
 )
 
