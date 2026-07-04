@@ -3069,6 +3069,8 @@ class EmulatorShutdownApp:
             try:
                 with open(vm_cfg_path, 'r', encoding='utf-8') as f:
                     vm = json.load(f).get("vm", {})
+                # 调试：打印 vm 字段帮助确认结构
+                _log_info(f"[MUMU_EDIT] vm keys: {list(vm.keys())}")
             except Exception as e:
                 messagebox.showerror("错误", f"读取配置失败: {e}")
                 return
@@ -3115,7 +3117,7 @@ class EmulatorShutdownApp:
             row = 2
             tk.Label(form, text="CPU核心:", font=("Microsoft YaHei", 10),
                      bg=BG, fg=TEXT, width=10, anchor="w").grid(row=row, column=0, pady=4, sticky="w")
-            cpu_var = tk.StringVar(value=str(vm.get("cpu", "2")))
+            cpu_var = tk.StringVar(value=str(vm.get("cpu", inst.get('cpu', "2"))))
             tk.Spinbox(form, from_=1, to=16, textvariable=cpu_var, width=8,
                        font=("Consolas", 10), bg=BG_LIGHT, fg=TEXT).grid(row=row, column=1, pady=4, sticky="w")
             fields['cpu'] = cpu_var
@@ -3124,7 +3126,10 @@ class EmulatorShutdownApp:
             row = 3
             tk.Label(form, text="内存(MB):", font=("Microsoft YaHei", 10),
                      bg=BG, fg=TEXT, width=10, anchor="w").grid(row=row, column=0, pady=4, sticky="w")
-            mem_var = tk.StringVar(value=str(vm.get("memory", "2048")))
+            mem_var = tk.StringVar(value=str(
+                vm.get("memory", vm.get("memory_mb", vm.get("mem_size",
+                    vm.get("ram", inst.get('memory', "2048"))))
+            )))
             tk.Spinbox(form, from_=256, to=16384, increment=256, textvariable=mem_var, width=8,
                        font=("Consolas", 10), bg=BG_LIGHT, fg=TEXT).grid(row=row, column=1, pady=4, sticky="w")
             fields['memory'] = mem_var
