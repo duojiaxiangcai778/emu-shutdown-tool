@@ -9,19 +9,19 @@
 - 暗色主题（Dark Theme）— 靛蓝/紫色主色调
 """
 
-import sys
-import os
-import time
-import json
-import threading
-import subprocess
-import winreg
 import ctypes
-import shutil
+import json
+import os
 import re
-from datetime import datetime, timedelta
+import shutil
+import subprocess
+import sys
+import threading
+import time
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+import winreg
+from datetime import datetime, timedelta
+from tkinter import filedialog, messagebox, ttk
 from tkinter.font import Font
 
 try:
@@ -30,21 +30,27 @@ except ImportError:
     psutil = None
 
 from ld_instance_manager import (
-    scan_instances, check_running_instances,
-    write_instance_config, get_instance_summary,
-    save_snapshot, restore_snapshot, list_snapshots,
-    launch_instance, staggered_launch,
-    load_tool_config, save_tool_config,
     SNAPSHOT_DIR,
-    get_emulator_environment_report,
     apply_all_fixes,
-    auto_detect_mumu, scan_mumu_instances,
-    shutdown_mumu_instance,
-    launch_mumu_with_health_check,
-    stop_mumu_health_monitor,
+    auto_detect_mumu,
+    check_running_instances,
     find_emulator_from_shortcuts,
+    get_emulator_environment_report,
+    get_instance_summary,
+    launch_instance,
+    launch_mumu_with_health_check,
+    list_snapshots,
+    load_tool_config,
+    restore_snapshot,
+    save_snapshot,
+    save_tool_config,
+    scan_instances,
+    scan_mumu_instances,
+    shutdown_mumu_instance,
+    staggered_launch,
+    stop_mumu_health_monitor,
+    write_instance_config,
 )
-
 
 # ============================================================
 # Windows API 常量 & 辅助
@@ -88,8 +94,8 @@ def _log_error(context, exc_info=None):
                 _LOG_BUFFER.append(f"[{ts}] [{context}]\n{exc_info}\n---\n")
             else:
                 _LOG_BUFFER.append(f"[{ts}] [{context}]\n")
-    except Exception:
-        pass
+    except Exception as _e:
+        _log_error("[CLN]", _e)
 
 
 def _log_info(msg):
@@ -98,8 +104,8 @@ def _log_info(msg):
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with _LOG_BUFFER_LOCK:
             _LOG_BUFFER.append(f"[{ts}] {msg}\n")
-    except Exception:
-        pass
+    except Exception as _e:
+        _log_error("[CLN]", _e)
 
 
 def _flush_log():
@@ -108,7 +114,6 @@ def _flush_log():
         if not _LOG_BUFFER:
             return
         content = "".join(_LOG_BUFFER)
-        _LOG_BUFFER.clear()
     try:
         log_path = _get_log_path()
         # 仅在文件不存在或为空时写入 header
@@ -122,8 +127,8 @@ def _flush_log():
                 old = f.read()
             with open(log_path, 'w', encoding='utf-8') as f:
                 f.write(old[-524288:])  # 保留最后 500KB
-    except Exception:
-        pass
+    except Exception as _e:
+        _log_error("[CLN]", _e)
 
 # -------------------- 关机常量 --------------------
 
@@ -217,8 +222,8 @@ def _force_shutdown_windows(should_restart):
             capture_output=True, timeout=10,
             creationflags=subprocess.CREATE_NO_WINDOW
         )
-    except Exception:
-        pass
+    except Exception as _e:
+        _log_error("[CLN]", _e)
 
     # ----- 方法2: ExitWindowsEx API (EWX_FORCE) -----
     # EWX_FORCE | EWX_SHUTDOWN | EWX_POWEROFF = 0x0D
@@ -232,8 +237,8 @@ def _force_shutdown_windows(should_restart):
         if result:
             time.sleep(3)
             return True
-    except Exception:
-        pass
+    except Exception as _e:
+        _log_error("[CLN]", _e)
 
     # ----- 方法3: InitiateShutdown API (Windows Vista+) -----
     # 更底层，能绕过更多拦截
@@ -246,8 +251,8 @@ def _force_shutdown_windows(should_restart):
         if result:
             time.sleep(3)
             return True
-    except Exception:
-        pass
+    except Exception as _e:
+        _log_error("[CLN]", _e)
 
     # ----- 方法4: wmic os call -----
     try:
@@ -266,8 +271,8 @@ def _force_shutdown_windows(should_restart):
             )
         time.sleep(3)
         return True
-    except Exception:
-        pass
+    except Exception as _e:
+        _log_error("[CLN]", _e)
 
     return False
 
@@ -300,8 +305,8 @@ def _get_icon_path():
         ico = os.path.join(_dir, "app_icon.ico")
         if os.path.isfile(ico):
             return ico
-    except Exception:
-        pass
+    except Exception as _e:
+        _log_error("[CLN]", _e)
     return None
 
 
@@ -448,8 +453,8 @@ def _scan_wmic():
                         'name': name,
                         'type': matched_type,
                     })
-    except Exception:
-        pass
+    except Exception as _e:
+        _log_error("[CLN]", _e)
     return processes
 
 
@@ -491,8 +496,8 @@ def _scan_tasklist():
                         'name': name,
                         'type': matched_type,
                     })
-    except Exception:
-        pass
+    except Exception as _e:
+        _log_error("[CLN]", _e)
     return processes
 
 
@@ -542,8 +547,8 @@ def find_ldplayer_install_path(procs):
                     line = line.strip()
                     if line.lower().endswith(('ldplayer.exe', 'dnplayer.exe')) and os.path.exists(line):
                         return os.path.dirname(line)
-            except Exception:
-                pass
+            except Exception as _e:
+                _log_error("[CLN]", _e)
     for path in candidates:
         if _find_ldconsole(path):
             return path
@@ -583,8 +588,8 @@ def _find_mumu_manager():
         info = auto_detect_mumu()
         if info.get("manager_path"):
             return info["manager_path"]
-    except Exception:
-        pass
+    except Exception as _e:
+        _log_error("[CLN]", _e)
     return None
 
 
@@ -635,15 +640,15 @@ def graceful_kill_async(on_done, on_status=None, on_progress=None,
         if on_status:
             try:
                 on_status(t)
-            except Exception:
-                pass
+            except Exception as _e:
+                _log_error("[CLN]", _e)
 
     def _progress(c, t=TOTAL):
         if on_progress:
             try:
                 on_progress(c, t)
-            except Exception:
-                pass
+            except Exception as _e:
+                _log_error("[CLN]", _e)
 
     def _work():
         start_ts = time.time()
@@ -699,8 +704,8 @@ def graceful_kill_async(on_done, on_status=None, on_progress=None,
                         subprocess.run([dnconsole_path, 'quitall'], capture_output=True,
                                        text=True, timeout=15,
                                        creationflags=subprocess.CREATE_NO_WINDOW)
-                    except Exception:
-                        pass
+                    except Exception as _e:
+                        _log_error("[CLN]", _e)
 
             # ---- 阶段1b：MuMuManager（MuMu 优雅关闭）----
             has_mumu = any(p.get('type') == 'mumu' for p in procs)
@@ -722,8 +727,8 @@ def graceful_kill_async(on_done, on_status=None, on_progress=None,
                                     if 'MuMuManager' in line and os.path.isfile(line):
                                         mumu_mgr = line
                                         break
-                            except Exception:
-                                pass
+                            except Exception as _e:
+                                _log_error("[CLN]", _e)
                 if mumu_mgr:
                     _status("通过 MuMuManager 优雅关闭 MuMu 模拟器...")
                     try:
@@ -731,8 +736,8 @@ def graceful_kill_async(on_done, on_status=None, on_progress=None,
                                        capture_output=True, text=True, timeout=15,
                                        cwd=os.path.dirname(mumu_mgr),
                                        creationflags=subprocess.CREATE_NO_WINDOW)
-                    except Exception:
-                        pass
+                    except Exception as _e:
+                        _log_error("[CLN]", _e)
 
             # ---- 等待阶段1完成（60秒）----
             _status("等待实例保存数据并退出...")
@@ -784,8 +789,8 @@ def graceful_kill_async(on_done, on_status=None, on_progress=None,
                                                 creationflags=subprocess.CREATE_NO_WINDOW
                                             )
                                             break
-                    except Exception:
-                        pass
+                    except Exception as _e:
+                        _log_error("[CLN]", _e)
 
                 # 等待第二阶段完成（40秒）
                 _status("等待实例响应 quit 指令...")
@@ -822,8 +827,8 @@ def graceful_kill_async(on_done, on_status=None, on_progress=None,
                             line = line.strip()
                             if line.startswith('leidian'):
                                 running_names.append(line)
-                except Exception:
-                    pass
+                except Exception as _e:
+                    _log_error("[CLN]", _e)
                 for inst_name in running_names:
                     try:
                         r = subprocess.run(
@@ -832,10 +837,10 @@ def graceful_kill_async(on_done, on_status=None, on_progress=None,
                             capture_output=True, text=True, timeout=10,
                             creationflags=subprocess.CREATE_NO_WINDOW
                         )
-                    except Exception:
-                        pass
+                    except Exception as _e:
+                        _log_error("[CLN]", _e)
                 _status(f"等待 ADB 关机生效（{ADB_SHUTDOWN_WAIT} 秒）...")
-                for i in range(ADB_SHUTDOWN_WAIT):
+                for _ in range(ADB_SHUTDOWN_WAIT):
                     remaining = _do_scan()
                     if not remaining:
                         success = count
@@ -857,12 +862,12 @@ def graceful_kill_async(on_done, on_status=None, on_progress=None,
                         subprocess.run(['taskkill', '/PID', str(proc['pid'])],
                                        capture_output=True, timeout=5,
                                        creationflags=subprocess.CREATE_NO_WINDOW)
-                    except Exception:
-                        pass
+                    except Exception as _e:
+                        _log_error("[CLN]", _e)
 
                 # 等待进程响应
                 _status("等待进程响应关闭信号...")
-                for i in range(20):
+                for _ in range(20):
                     remaining = _do_scan()
                     if not remaining:
                         success = count
@@ -887,8 +892,8 @@ def graceful_kill_async(on_done, on_status=None, on_progress=None,
                                            capture_output=True, timeout=8,
                                            creationflags=subprocess.CREATE_NO_WINDOW)
                             success += 1
-                        except Exception:
-                            pass
+                        except Exception as _e:
+                            _log_error("[CLN]", _e)
                 # 辅助进程也清理
                 for proc in remaining:
                     if 'adb' in proc['name'].lower() or 'dnconsole' in proc['name'].lower():
@@ -897,15 +902,15 @@ def graceful_kill_async(on_done, on_status=None, on_progress=None,
                                            capture_output=True, timeout=5,
                                            creationflags=subprocess.CREATE_NO_WINDOW)
                             success += 1
-                        except Exception:
-                            pass
+                        except Exception as _e:
+                            _log_error("[CLN]", _e)
             else:
                 if success == 0:
                     success = count
 
             # ---- 等待清理 ----
             _status("等待系统清理完成...")
-            for i in range(POST_FORCE_WAIT):
+            for _ in range(POST_FORCE_WAIT):
                 time.sleep(1)
                 _progress(min(int(time.time() - start_ts) + 2, TOTAL - 8))
 
@@ -932,8 +937,8 @@ def graceful_kill_async(on_done, on_status=None, on_progress=None,
             _status(f"出错：{str(e)}")
             try:
                 on_done(0, 0, 1, [str(e)], backup_msg, shutdown_executed)
-            except Exception:
-                pass
+            except Exception as _e:
+                _log_error("[CLN]", _e)
 
     threading.Thread(target=_work, daemon=True).start()
 
@@ -951,10 +956,10 @@ def _cleanup_old_backups(backup_root, keep_count=BACKUP_KEEP_COUNT):
         if len(entries) > keep_count:
             # 按时间排序（名称含时间戳），删除最旧的
             entries.sort(key=lambda x: x[1])
-            for d, name in entries[:-keep_count]:
+            for d, _ in entries[:-keep_count]:
                 shutil.rmtree(d, ignore_errors=True)
-    except Exception:
-        pass
+    except Exception as _e:
+        _log_error("[CLN]", _e)
 
 
 def _do_shutdown_countdown(should_restart, _status, _progress, TOTAL, start_ts):
@@ -1158,8 +1163,8 @@ class EmulatorShutdownApp:
             ico = _get_icon_path()
             if ico:
                 self.root.iconbitmap(ico)
-        except Exception:
-            pass
+        except Exception as _e:
+            _log_error("[CLN]", _e)
         self.root.geometry("880x850")
         self.root.minsize(820, 700)
         self.root.configure(bg=BG)
@@ -1787,7 +1792,8 @@ class EmulatorShutdownApp:
         for k in ("update_id", "auto_reset_id"):
             if t.get(k):
                 try: self.root.after_cancel(t[k])
-                except Exception: pass
+                except Exception as _e:
+                    _log_error("[CLN]", _e)
                 t[k] = None
         t["thread"] = None
         t["vars"]["act_btn"].config_bg(color); t["vars"]["act_btn"].set_text("▶")
@@ -1837,7 +1843,8 @@ class EmulatorShutdownApp:
         # 先取消旧的 pending after 回调
         if t.get("auto_reset_id"):
             try: self.root.after_cancel(t["auto_reset_id"])
-            except Exception: pass
+            except Exception as _e:
+                _log_error("[CLN]", _e)
         t["auto_reset_id"] = None
         if not t["enabled"]:
             return
@@ -1863,16 +1870,20 @@ class EmulatorShutdownApp:
             for k in ("update_id", "auto_reset_id"):
                 if task.get(k):
                     try: self.root.after_cancel(task[k])
-                    except Exception: pass
+                    except Exception as _e:
+                        _log_error("[CLN]", _e)
                     task[k] = None
             task["vars"]["act_btn"].config_bg(color)
             task["vars"]["act_btn"].set_text("▶")
             task["vars"]["st_lbl"].config(text="已禁用", fg=TEXT_LIGHT)
-        # 禁用时停止 MuMu 健康巡检（仅启动任务有）
+        # 禁用时停止 MuMu 健康巡检（清全局 monitors）
         if not task["enabled"] and task.get("type") == "launch":
-            for m in (task.get("_mumu_monitors") or {}).values():
+            from ld_instance_manager import stop_mumu_health_monitor
+            with self._mumu_lock:
+                monitors = dict(self._mumu_monitors)
+                self._mumu_monitors.clear()
+            for m in monitors.values():
                 stop_mumu_health_monitor(m)
-            task["_mumu_monitors"] = {}
         self._save_tasks_config()
 
     def _stop_all_generic(self, tasks_list, color):
@@ -1880,7 +1891,8 @@ class EmulatorShutdownApp:
         for t in tasks_list:
             if t.get("auto_reset_id"):
                 try: self.root.after_cancel(t["auto_reset_id"])
-                except Exception: pass
+                except Exception as _e:
+                    _log_error("[CLN]", _e)
                 t["auto_reset_id"] = None
             # 停止 MuMu 健康巡检
             for m in (t.get("_mumu_monitors") or {}).values():
@@ -2005,7 +2017,7 @@ class EmulatorShutdownApp:
         _log_info(f"_add_launch_task: 开始创建 tid={tid}")
         try:
             widget = self._make_launch_task_row(tid, data)
-            _log_info(f"_add_launch_task: _make_launch_task_row 成功")
+            _log_info("_add_launch_task: _make_launch_task_row 成功")
         except Exception as e:
             _log_error(f"_add_launch_task _make_launch_task_row 异常: {type(e).__name__}: {e}")
             return
@@ -2264,10 +2276,6 @@ class EmulatorShutdownApp:
         self._shutdown_running = True
 
         should_shutdown = self.shutdown_var.get()
-        action_text = "并关机" if should_shutdown else ""
-        if should_shutdown and self.restart_var.get():
-            action_text = "并重启"
-
         # 直接执行，不再弹确认框
 
         graceful_kill_async(
@@ -2306,8 +2314,8 @@ class EmulatorShutdownApp:
         if hasattr(self, 'scan_timer_id') and self.scan_timer_id:
             try:
                 self.root.after_cancel(self.scan_timer_id)
-            except Exception:
-                pass
+            except Exception as _e:
+                _log_error("[CLN]", _e)
         self.scan_timer_id = self.root.after(3000, self._start_scan_loop)
 
     def _trigger_scan(self):
@@ -2326,8 +2334,8 @@ class EmulatorShutdownApp:
         """在主线程接收扫描结果"""
         try:
             self._emu_procs_cache = procs
-        except Exception:
-            pass
+        except Exception as _e:
+            _log_error("[CLN]", _e)
         finally:
             self._emu_scan_pending = False
 
@@ -2427,8 +2435,8 @@ class EmulatorShutdownApp:
             wh = win.winfo_reqheight()
             win.geometry(f"+{sw-ww-20}+{sh-wh-60}")
             win.after(duration, win.destroy)
-        except Exception:
-            pass  # 静默失败不影响主流程
+        except Exception as _e:
+            _log_error("[TOAST]", _e)  # toast 失败不影响主流程
 
     def _init_instance_manager(self):
         """初始化实例管理器：加载保存路径，缺失时自动搜索"""
@@ -2470,8 +2478,8 @@ class EmulatorShutdownApp:
                     from ld_instance_manager import auto_detect_paths
                     detected = auto_detect_paths()
                     self._apply_detected_paths(detected)
-                except Exception:
-                    pass
+                except Exception as _e:
+                    _log_error("[CLN]", _e)
                 self.root.after(0, self._save_all_paths)
                 self.root.after(0, self._scan_and_display_instances)
             threading.Thread(target=_work, daemon=True).start()
@@ -2554,16 +2562,16 @@ class EmulatorShutdownApp:
             _log_error(f"[MUMU] 不是目录，当文件处理: {path}")
         _log_error(f"[MUMU] 最终路径: {path}, 存在={os.path.isfile(path) if path else False}")
         if not os.path.isfile(path) or "MuMuManager" not in os.path.basename(path):
-            _log_error(f"[MUMU] 验证失败: 不存在或文件名不含 MuMuManager")
+            _log_error("[MUMU] 验证失败: 不存在或文件名不含 MuMuManager")
             return False
         self._mumu_path = path
         self.mumu_path_var.set(path)
         self.mumu_path_entry.config(fg=TEXT)
         self._save_all_paths()
-        _log_error(f"[MUMU] 保存成功，准备刷新实例")
+        _log_error("[MUMU] 保存成功，准备刷新实例")
         try:
             self._scan_and_display_instances()
-            _log_error(f"[MUMU] 刷新完成")
+            _log_error("[MUMU] 刷新完成")
         except Exception as e:
             _log_error(f"[MUMU] 刷新异常: {e}")
         return True
@@ -2667,8 +2675,8 @@ class EmulatorShutdownApp:
                     self.mumu_path_var.set(sc["mumu_manager"])
                     self._save_all_paths()
                     self.mumu_path_entry.config(fg=TEXT)
-            except Exception:
-                pass
+            except Exception as _e:
+                _log_error("[CLN]", _e)
         self._scan_and_display_instances()
 
     def _scan_and_display_instances(self):
@@ -2685,8 +2693,8 @@ class EmulatorShutdownApp:
                     vms_cfg = _saved.get("paths", {}).get("vms_config_dir")
                     if not self._mumu_path:
                         self._mumu_path = _saved.get("mumu_manager_path", "")
-                except Exception:
-                    pass
+                except Exception as _e:
+                    _log_error("[CLN]", _e)
             # 配置文件也没有 → 先尝试已知路径兜底
             if not vms_cfg:
                 for _p in [r"D:\E\LDPlayer9\vms\config", r"D:\E\LDPlayer9\vms"]:
@@ -2817,6 +2825,9 @@ class EmulatorShutdownApp:
                                  font=("Consolas", 8), textvariable=self._mumu_health_interval_var,
                                  command=self._save_mumu_health_setting)
                 iv.pack(side="left", padx=(0, 1))
+                # 手动输入后失去焦点也保存
+                iv.bind("<FocusOut>", lambda e: self._save_mumu_health_setting())
+                iv.bind("<Return>", lambda e: self._save_mumu_health_setting())
                 # 取消 Spinbox 默认绑定防止触发 _on_mw
                 iv.unbind("<MouseWheel>")
                 iv.unbind("<Button-4>")
@@ -2928,7 +2939,6 @@ class EmulatorShutdownApp:
 
         def _work():
             vms_cfg = self._ld_paths.get("vms_config_dir")
-            restored = False
             if vms_cfg and os.path.isdir(vms_cfg):
                 # 检查所有勾选实例的配置文件是否完好
                 config_ok = True
@@ -2958,7 +2968,6 @@ class EmulatorShutdownApp:
                     if snapshots:
                         latest = snapshots[0]
                         count, msg = restore_snapshot(latest['path'], vms_cfg, mp_cfg, mumu_vms_dir=self._get_mumu_vms_dir())
-                        restored = True
                         self.root.after(0, lambda s=msg: self.launch_status_var.set(f"已恢复: {s}"))
                         time.sleep(1)
                 else:
@@ -3005,8 +3014,10 @@ class EmulatorShutdownApp:
 
     def _open_settings_editor(self, inst):
         """打开设置编辑窗口"""
-        # MuMu 实例没有 settings，暂不支持编辑
-        if 'settings' not in inst or not inst.get('settings'):
+        # 判断实例类型：MuMu 实例没有 settings/config_path，暂不支持编辑
+        is_mumu = ('settings' not in inst or not inst.get('settings')
+                   or 'config_path' not in inst or not inst.get('config_path'))
+        if is_mumu:
             messagebox.showinfo("提示", "MuMu 实例编辑暂不支持，请通过 MuMu 客户端修改")
             return
         win = tk.Toplevel(self.root)
@@ -3169,8 +3180,8 @@ class EmulatorShutdownApp:
                         mp = sp.get("multiplayer_path")
                     if not self._mumu_path:
                         self._mumu_path = _saved.get("mumu_manager_path", "")
-                except Exception:
-                    pass
+                except Exception as _e:
+                    _log_error("[CLN]", _e)
             # 配置文件也没有 → 自动搜索
             if not vms_cfg or not mp:
                 from ld_instance_manager import auto_detect_paths
@@ -3245,8 +3256,8 @@ class EmulatorShutdownApp:
             try:
                 cfg = load_tool_config()
                 restore_geometry = cfg.get('dialog_geometry', {}).get('backup_list')
-            except Exception:
-                pass
+            except Exception as _e:
+                _log_error("[CLN]", _e)
 
         # 扫描多个可能的备份位置
         possible_dirs = []
@@ -3276,7 +3287,7 @@ class EmulatorShutdownApp:
                 if os.path.isdir(d) and name.startswith("雷电配置备份_") and name not in seen_names:
                     seen_names.add(name)
                     fcount = 0
-                    for root, _, files in os.walk(d):
+                    for _, _, files in os.walk(d):
                         fcount += len(files)
                     all_entries.append((d, name, fcount, backup_root))
 
@@ -3310,7 +3321,7 @@ class EmulatorShutdownApp:
             listbox.pack(side="left", fill="both", expand=True)
             scrollbar.pack(side="right", fill="y")
 
-            for d, name, fcount, _ in all_entries:
+            for _, name, fcount, _ in all_entries:
                 ts = name.replace("雷电配置备份_", "")
                 listbox.insert(tk.END, f"  {ts}  |  {fcount} 个文件")
 
@@ -3329,8 +3340,8 @@ class EmulatorShutdownApp:
                         cfg['dialog_geometry'] = {}
                     cfg['dialog_geometry']['backup_list'] = geo
                     save_tool_config(cfg)
-                except Exception:
-                    pass
+                except Exception as _e:
+                    _log_error("[CLN]", _e)
 
             def on_delete():
                 sel = listbox.curselection()
@@ -3353,14 +3364,13 @@ class EmulatorShutdownApp:
                           bg=TEXT_LIGHT, fg="white", font=("Microsoft YaHei", 9),
                           padx=10).pack(side="right")
         except Exception as e:
-            import traceback
-            err_msg = f"弹窗异常: {e}\n\n{traceback.format_exc()}"
+            err_msg = f"弹窗异常: {e}\n\n{_traceback.format_exc()}"
             exe_dir = os.path.dirname(os.path.abspath(sys.executable)) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
             try:
                 with open(os.path.join(exe_dir, "_backup_error.log"), 'w', encoding='utf-8') as f:
                     f.write(err_msg)
-            except Exception:
-                pass
+            except Exception as _e:
+                _log_error("[CLN]", _e)
             messagebox.showerror("备份列表异常",
                 f"发生了未预期的错误，已记录到日志。\n\n{err_msg}")
 
@@ -3371,8 +3381,8 @@ class EmulatorShutdownApp:
             try:
                 cfg = load_tool_config()
                 restore_geometry = cfg.get('dialog_geometry', {}).get('snapshot_list')
-            except Exception:
-                pass
+            except Exception as _e:
+                _log_error("[CLN]", _e)
 
         # ==== 扫描 ====
         all_snapshots = list_snapshots(SNAPSHOT_DIR)
@@ -3426,8 +3436,8 @@ class EmulatorShutdownApp:
                         cfg['dialog_geometry'] = {}
                     cfg['dialog_geometry']['snapshot_list'] = geo
                     save_tool_config(cfg)
-                except Exception:
-                    pass
+                except Exception as _e:
+                    _log_error("[CLN]", _e)
 
             def on_select():
                 sel = listbox.curselection()
@@ -3462,14 +3472,13 @@ class EmulatorShutdownApp:
                           bg=TEXT_LIGHT, fg="white", font=("Microsoft YaHei", 9),
                           padx=10).pack(side="right")
         except Exception as e:
-            import traceback
-            err_msg = f"弹窗异常: {e}\n\n{traceback.format_exc()}"
+            err_msg = f"弹窗异常: {e}\n\n{_traceback.format_exc()}"
             try:
                 log_dir = os.path.dirname(os.path.abspath(sys.executable)) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
                 with open(os.path.join(log_dir, "_snapshot_error.log"), 'w', encoding='utf-8') as f:
                     f.write(err_msg)
-            except Exception:
-                pass
+            except Exception as _e:
+                _log_error("[CLN]", _e)
             messagebox.showerror("快照列表异常",
                 f"发生了未预期的错误，已记录到日志。\n\n{err_msg}")
 
@@ -3560,7 +3569,11 @@ class EmulatorShutdownApp:
 
             # 2. ADB 状态
             if self._mumu_instances:
-                from ld_instance_manager import check_mumu_adb_connection, check_mumu_boot_completed, get_mumu_adb_port
+                from ld_instance_manager import (
+                    check_mumu_adb_connection,
+                    check_mumu_boot_completed,
+                    get_mumu_adb_port,
+                )
                 for inst in self._mumu_instances:
                     idx = inst['index']
                     port = get_mumu_adb_port(idx)
@@ -3574,7 +3587,7 @@ class EmulatorShutdownApp:
             # 3. 输出
             msg = "\n".join(lines)
             _log_info(msg)
-            self.root.after(0, lambda: self._toast("MuMu 诊断", f"完成，详情见日志", 4000))
+            self.root.after(0, lambda: self._toast("MuMu 诊断", "完成，详情见日志", 4000))
         threading.Thread(target=_work, daemon=True).start()
 
     # ---------- 日志面板 ----------
@@ -3587,21 +3600,21 @@ class EmulatorShutdownApp:
         try:
             from ld_instance_manager import TOOL_CONFIG_FILE
             candidates.append(TOOL_CONFIG_FILE)
-        except Exception:
-            pass
+        except Exception as _e:
+            _log_error("[CLN]", _e)
 
         # 2. 从 sys.argv[0]（启动路径）
         try:
             argv_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
             candidates.append(os.path.join(argv_dir, "instance_config.json"))
-        except Exception:
-            pass
+        except Exception as _e:
+            _log_error("[CLN]", _e)
 
         # 3. 从当前工作目录
         try:
             candidates.append(os.path.join(os.getcwd(), "instance_config.json"))
-        except Exception:
-            pass
+        except Exception as _e:
+            _log_error("[CLN]", _e)
 
         for path in candidates:
             if path and os.path.isfile(path):
@@ -3638,9 +3651,9 @@ class EmulatorShutdownApp:
             content = self._log_text.get("1.0", "end-1c")
             self.root.clipboard_clear()
             self.root.clipboard_append(content)
-            self._toast("已复制", f"日志内容已复制到剪贴板")
-        except Exception:
-            pass
+            self._toast("已复制", "日志内容已复制到剪贴板")
+        except Exception as _e:
+            _log_error("[CLN]", _e)
 
     def _refresh_log_display(self):
         """刷新右侧日志面板（每秒调用一次）"""
@@ -3655,8 +3668,8 @@ class EmulatorShutdownApp:
             self._log_text.insert("1.0", lines)
             self._log_text.see("end")  # 滚动到底部
             self._log_text.configure(state="disabled")
-        except Exception:
-            pass
+        except Exception as _e:
+            _log_error("[CLN]", _e)
         # 每 10 秒写入一次文件，避免崩溃丢日志
         self._log_flush_counter = getattr(self, '_log_flush_counter', 0) + 1
         if self._log_flush_counter >= 10:
@@ -3693,6 +3706,12 @@ class EmulatorShutdownApp:
     def _on_mumu_shutdown_one(self, index):
         """关闭单个 MuMu 实例"""
         def _work():
+            # 先停止监测线程，防止自动重启
+            from ld_instance_manager import stop_mumu_health_monitor
+            with self._mumu_lock:
+                mon = self._mumu_monitors.pop(index, None)
+            if mon:
+                stop_mumu_health_monitor(mon)
             ok, msg = shutdown_mumu_instance(self._mumu_path, index)
             self.root.after(0, lambda: messagebox.showinfo(
                 "关闭结果" if ok else "关闭失败", msg))
@@ -3751,6 +3770,13 @@ class EmulatorShutdownApp:
         if not self._mumu_instances:
             return
         def _work():
+            # 先停止所有监测线程，防止自动重启
+            from ld_instance_manager import stop_mumu_health_monitor
+            with self._mumu_lock:
+                monitors = list(self._mumu_monitors.items())
+                self._mumu_monitors.clear()
+            for _, mon in monitors:
+                stop_mumu_health_monitor(mon)
             total = len(self._mumu_instances)
             success = 0
             for inst in self._mumu_instances:
@@ -3813,8 +3839,8 @@ class EmulatorShutdownApp:
             try:
                 subprocess.run([dnconsole, 'quitall'], capture_output=True, timeout=30,
                                creationflags=subprocess.CREATE_NO_WINDOW)
-            except Exception:
-                pass
+            except Exception as _e:
+                _log_error("[CLN]", _e)
             time.sleep(5)
             self.root.after(0, lambda: messagebox.showinfo("关闭完成", "已发送关闭指令"))
             self.root.after(500, self._scan_and_display_instances)
@@ -3879,7 +3905,7 @@ class EmulatorShutdownApp:
         self._save_tasks_config()
         # 停止所有 MuMu 定时巡检
         from ld_instance_manager import stop_mumu_health_monitor
-        for idx, mon in list(self._mumu_monitors.items()):
+        for _, mon in list(self._mumu_monitors.items()):
             stop_mumu_health_monitor(mon)
         self._mumu_monitors.clear()
         self._destroyed = True
@@ -3889,11 +3915,13 @@ class EmulatorShutdownApp:
             t["running"] = False
         if self.scan_timer_id:
             try: self.root.after_cancel(self.scan_timer_id)
-            except Exception: pass
+            except Exception as _e:
+                _log_error("[CLN]", _e)
             self.scan_timer_id = None
         if self._log_refresh_id:
             try: self.root.after_cancel(self._log_refresh_id)
-            except Exception: pass
+            except Exception as _e:
+                _log_error("[CLN]", _e)
             self._log_refresh_id = None
         _flush_log()
         self.root.destroy()
@@ -3968,7 +3996,6 @@ class EmulatorShutdownApp:
                 report = get_emulator_environment_report()
                 self.root.after(0, lambda r=report: self._update_env_display(r))
             except Exception as e:
-                import traceback
                 err_msg = f"检测失败: {str(e)}"
                 self.root.after(0, lambda m=err_msg: self.env_status_var.set(m))
                 self.root.after(0, lambda: self.env_scan_btn.set_text("一键检测"))
@@ -4027,7 +4054,7 @@ class EmulatorShutdownApp:
         # 详情文本
         detail_lines = []
         if issues:
-            for i, issue in enumerate(issues, 1):
+            for _, issue in enumerate(issues, 1):
                 icon = {"critical": "[!]", "warning": "[~]", "info": "[i]"}.get(issue["severity"], "-")
                 detail_lines.append(f"{icon} [{issue['severity'].upper()}] {issue['message']}")
         else:
@@ -4088,7 +4115,6 @@ class EmulatorShutdownApp:
                 # 重新检测
                 self.root.after(1000, self._on_env_scan)
             except Exception as e:
-                import traceback
                 err_msg = f"修复失败: {str(e)}"
                 self.root.after(0, lambda m=err_msg: self.env_status_var.set(m))
                 self.root.after(0, lambda: self.env_fix_btn.set_text("一键修复"))
@@ -4136,8 +4162,8 @@ def main():
                     )
                     import psutil as psutil_module
                     globals()['psutil'] = psutil_module
-                except Exception:
-                    pass
+                except Exception as _e:
+                    _log_error("[CLN]", _e)
             threading.Thread(target=_install_psutil, daemon=True).start()
 
         root = tk.Tk()
@@ -4146,7 +4172,7 @@ def main():
         root.withdraw()
         # 确保窗口已完全初始化
         root.update_idletasks()
-        app = EmulatorShutdownApp(root)
+        _app = EmulatorShutdownApp(root)
         # 确保所有 UI 渲染完成后再显示
         root.update_idletasks()
         if no_window:
@@ -4155,14 +4181,13 @@ def main():
             root.deiconify()
         root.mainloop()
     except Exception:
-        import traceback
         try:
             _log_info("程序异常崩溃")
-            tb = traceback.format_exc()
+            tb = _traceback.format_exc()
             _LOG_BUFFER.append(f"\n{tb}\n")
             _flush_log()
-        except Exception:
-            pass
+        except Exception as _e:
+            _log_error("[CLN]", _e)
         raise
 
 

@@ -8,20 +8,18 @@
 - 间隔启动
 """
 
-import os
-import sys
+import ctypes
 import json
+import os
 import re
-import time
 import shutil
 import subprocess
-import threading
-import winreg
-import ctypes
+import sys
 import tempfile
+import threading
+import time
+import winreg
 from datetime import datetime
-from pathlib import Path
-
 
 # ============================================================
 # 路径自动探测
@@ -145,8 +143,8 @@ def _find_ld_from_process():
                 return c
         if candidates:
             return candidates[0]
-    except Exception:
-        pass
+    except Exception as _e:
+        _log_error("[CLN]", _e)
     return None
 
 
@@ -163,8 +161,8 @@ def _find_multiplayer_from_process():
             line = line.strip()
             if line.lower().endswith(('.exe',)) and os.path.isfile(line):
                 return os.path.dirname(line)
-    except Exception:
-        pass
+    except Exception as _e:
+        _log_error("[CLN]", _e)
     return None
 
 
@@ -193,7 +191,8 @@ def _find_multiplayer_from_pathconfig():
                                     return parent
                                 # 直接返回 LDPlayer 路径（多开器可能在同一个目录）
                                 return val
-                except Exception:
+                except Exception as _e:
+                    _log_error("[CLN]", _e)
                     continue
     return None
 
@@ -214,7 +213,8 @@ def _find_ld_from_registry():
     for hkey, subkey in reg_paths:
         try:
             key = winreg.OpenKey(hkey, subkey, 0, winreg.KEY_READ)
-        except Exception:
+        except Exception as _e:
+            _log_error("[CLN]", _e)
             continue
         try:
             for val_name in ['InstallPath', 'Path', 'InstallDir', '']:
@@ -227,8 +227,8 @@ def _find_ld_from_registry():
         finally:
             try:
                 winreg.CloseKey(key)
-            except Exception:
-                pass
+            except Exception as _e:
+                _log_error("[CLN]", _e)
     return None
 
 
@@ -244,11 +244,11 @@ def _find_ld_from_pathconfig():
                             if line.startswith('player') and '=' in line:
                                 path = line.split('=', 1)[1].strip().strip('"\'')
                                 # 尝试拼接 dnconsole.exe 确认
-                                for p in [path, os.path.join(path, 'dnconsole.exe')]:
+                                for _ in [path, os.path.join(path, 'dnconsole.exe')]:
                                     if os.path.isfile(os.path.join(path, 'dnconsole.exe')):
                                         return os.path.normpath(path)
-                except Exception:
-                    pass
+                except Exception as _e:
+                    _log_error("[CLN]", _e)
             # 限制深度 5 层
             depth = root.replace(drive, "").count(os.sep)
             if depth >= 5:
@@ -283,8 +283,8 @@ def _find_multiplayer_nearby(parent_dir):
                 sub = os.path.join(parent_dir, item)
                 if os.path.isdir(sub) and os.path.isfile(os.path.join(sub, 'dnmultiplayerex.exe')):
                     return sub
-        except Exception:
-            pass
+        except Exception as _e:
+            _log_error("[CLN]", _e)
     return None
 
 
@@ -356,8 +356,8 @@ def _scan_config_files(config_dir, instances):
                     "settings": settings,
                     "running": False,
                 })
-    except Exception:
-        pass
+    except Exception as _e:
+        _log_error("[CLN]", _e)
 
 
 def _scan_instance_dirs(vms_dir, instances):
@@ -391,8 +391,8 @@ def _scan_instance_dirs(vms_dir, instances):
                 "settings": settings,
                 "running": False,
             })
-    except Exception:
-        pass
+    except Exception as _e:
+        _log_error("[CLN]", _e)
 
 
 def check_running_instances(instances, dnconsole_path=None):
@@ -414,7 +414,6 @@ def check_running_instances(instances, dnconsole_path=None):
                 for line in r.stdout.strip().splitlines():
                     parts = line.split(',')
                     if len(parts) >= 6:
-                        idx = parts[0].strip()
                         name = parts[1].strip()
                         # 第6列(索引5)表示运行状态: 1=运行中
                         status = parts[5].strip()
@@ -440,8 +439,8 @@ def check_running_instances(instances, dnconsole_path=None):
                     for inst in instances:
                         inst['running'] = inst['name'] in running_names
                     return
-        except Exception:
-            pass
+        except Exception as _e:
+            _log_error("[CLN]", _e)
 
     # 回退方式: wmic 通过命令行检测
     try:
@@ -458,8 +457,8 @@ def check_running_instances(instances, dnconsole_path=None):
                 # 使用单词边界匹配，避免 "leidian1" 误匹配 "leidian10"
                 if re.search(r'(?<![a-zA-Z0-9])' + re.escape(name) + r'(?![a-zA-Z0-9])', line):
                     running_names.add(name)
-    except Exception:
-        pass
+    except Exception as _e:
+        _log_error("[CLN]", _e)
 
     for inst in instances:
         inst['running'] = inst['name'] in running_names
@@ -515,7 +514,6 @@ def save_snapshot(vms_config_dir, multiplayer_config_dir, snapshot_base_dir, mum
     if not vms_config_dir or not os.path.isdir(vms_config_dir):
         # LDPlayer 不可用时只备份 MuMu
         vms_config_dir = None
-        ld_count = 0
         _log_error("[SNAP] vms_config_dir 不可用，仅备份 MuMu")
 
     timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
@@ -540,8 +538,8 @@ def save_snapshot(vms_config_dir, multiplayer_config_dir, snapshot_base_dir, mum
         if count == 0 and vms_config_dir:
             try:
                 _log_error(f"[SNAP] vms_config_dir 内容: {os.listdir(vms_config_dir)}")
-            except Exception:
-                pass
+            except Exception as _e:
+                _log_error("[CLN]", _e)
 
         # 全局配置已在上面备份，这里不再重复复制
 
@@ -559,8 +557,8 @@ def save_snapshot(vms_config_dir, multiplayer_config_dir, snapshot_base_dir, mum
                     try:
                         shutil.copy2(cfg_src, os.path.join(mumu_snap, f"{entry}.json"))
                         mumu_count += 1
-                    except Exception:
-                        pass
+                    except Exception as _e:
+                        _log_error("[CLN]", _e)
 
         # 写入元信息
         meta = {
@@ -656,8 +654,8 @@ def list_snapshots(snapshot_base_dir):
                 try:
                     with open(meta_path, 'r', encoding='utf-8') as f:
                         meta = json.load(f)
-                except Exception:
-                    pass
+                except Exception as _e:
+                    _log_error("[CLN]", _e)
             ld_cnt = meta.get("ldplayer_count")
             if ld_cnt is None:
                 ld_cnt = meta.get("instance_count", 0)
@@ -837,8 +835,8 @@ def _ensure_snapshot_dir():
     """确保快照目录存在"""
     try:
         os.makedirs(SNAPSHOT_DIR, exist_ok=True)
-    except Exception:
-        pass
+    except Exception as _e:
+        _log_error("[CLN]", _e)
 
 _ensure_snapshot_dir()
 
@@ -849,8 +847,8 @@ def load_tool_config():
         if os.path.isfile(TOOL_CONFIG_FILE):
             with open(TOOL_CONFIG_FILE, 'r', encoding='utf-8') as f:
                 return json.load(f)
-    except Exception:
-        pass
+    except Exception as _e:
+        _log_error("[CLN]", _e)
     return {}
 
 
@@ -866,8 +864,8 @@ def save_tool_config(config):
         try:
             if os.path.isfile(tmp):
                 os.remove(tmp)
-        except Exception:
-            pass
+        except Exception as _e:
+            _log_error("[CLN]", _e)
         return False
 
 
@@ -938,8 +936,8 @@ def check_windows_feature(feature_name):
                 "enabled": enabled,
                 "raw": out,
             }
-    except Exception:
-        pass
+    except Exception as _e:
+        _log_error("[CLN]", _e)
     return {"name": feature_name, "label": feature_name, "enabled": None, "raw": ""}
 
 
@@ -978,8 +976,8 @@ def _check_virtualization_based_security():
                 }
             except ValueError:
                 pass
-    except Exception:
-        pass
+    except Exception as _e:
+        _log_error("[CLN]", _e)
     return {"name": "VirtualizationBasedSecurity", "label": "VBS", "enabled": None, "raw": ""}
 
 
@@ -993,8 +991,8 @@ def check_virtualization_cpu():
         if rc == 0 and out:
             enabled = "True" in out
             return {"name": "CPU_VTx", "label": "CPU 虚拟化 (VT-x/AMD-V)", "enabled": enabled, "raw": out.strip()}
-    except Exception:
-        pass
+    except Exception as _e:
+        _log_error("[CLN]", _e)
     return {"name": "CPU_VTx", "label": "CPU 虚拟化 (VT-x/AMD-V)", "enabled": None, "raw": ""}
 
 
@@ -1042,8 +1040,8 @@ def check_ldplayer_hyperv_version():
                     content = f.read()
                 if "hyperv" in content.lower():
                     return {"version": "hyperv", "detail": "Hyper-V 兼容版（配置含 hyperv 标识）"}
-            except Exception:
-                pass
+            except Exception as _e:
+                _log_error("[CLN]", _e)
         return {"version": "standard", "detail": "疑似标准版（默认判断）"}
 
 
@@ -1257,8 +1255,8 @@ def _log_error(context, exc_info=None):
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with open(log_path, 'a', encoding='utf-8') as f:
             f.write(f"[{ts}] [{context}]\n{exc_info}\n---\n")
-    except Exception:
-        pass
+    except Exception as _e:
+        _log_error("[CLN]", _e)
 
 # 常见 MuMu 安装路径
 MUMU_PATHS_CANDIDATES = [
@@ -1307,8 +1305,8 @@ def auto_detect_mumu():
                 result["install_dir"] = os.path.dirname(os.path.dirname(line))
                 result["found"] = True
                 return result
-    except Exception:
-        pass
+    except Exception as _e:
+        _log_error("[CLN]", _e)
     # wmic 备用
     try:
         r = subprocess.run(
@@ -1323,8 +1321,8 @@ def auto_detect_mumu():
                 result["install_dir"] = os.path.dirname(os.path.dirname(line))
                 result["found"] = True
                 return result
-    except Exception:
-        pass
+    except Exception as _e:
+        _log_error("[CLN]", _e)
 
     # 1c. 从注册表搜索
     reg_paths = [
@@ -1341,7 +1339,8 @@ def auto_detect_mumu():
     for hkey, subkey in reg_paths:
         try:
             key = winreg.OpenKey(hkey, subkey, 0, winreg.KEY_READ)
-        except Exception:
+        except Exception as _e:
+            _log_error("[CLN]", _e)
             continue
         try:
             for val_name in ['InstallPath', 'Path', 'InstallDir', '']:
@@ -1373,8 +1372,8 @@ def auto_detect_mumu():
         finally:
             try:
                 winreg.CloseKey(key)
-            except Exception:
-                pass
+            except Exception as _e:
+                _log_error("[CLN]", _e)
 
     # 2. 遍历所有盘符搜索 MuMuManager.exe（不预设目录名，覆盖任意安装路径）
     for drive in _get_all_drives():
@@ -1434,8 +1433,8 @@ def scan_mumu_instances(mumu_manager_path):
             raw = (r.stdout or b"").decode('utf-8', errors='replace').strip()
             if raw:
                 return json.loads(raw)
-        except Exception:
-            pass
+        except Exception as _e:
+            _log_error("[CLN]", _e)
 
         # 尝试 B：cmd /c 中转
         try:
@@ -1447,8 +1446,8 @@ def scan_mumu_instances(mumu_manager_path):
             raw = (r.stdout or b"").decode('utf-8', errors='replace').strip()
             if raw:
                 return json.loads(raw)
-        except Exception:
-            pass
+        except Exception as _e:
+            _log_error("[CLN]", _e)
 
         # 尝试 C：临时 bat 文件 > stdout 重定向
         out_file = os.path.join(tempfile.gettempdir(), f"_mumu_scan_{os.getpid()}.txt")
@@ -1464,17 +1463,17 @@ def scan_mumu_instances(mumu_manager_path):
                     raw = f.read().strip()
                 if raw:
                     return json.loads(raw)
-        except Exception:
-            pass
+        except Exception as _e:
+            _log_error("[CLN]", _e)
         finally:
             try:
                 if os.path.isfile(bat_path): os.unlink(bat_path)
-            except Exception:
-                pass
+            except Exception as _e:
+                _log_error("[CLN]", _e)
             try:
                 if os.path.isfile(out_file): os.unlink(out_file)
-            except Exception:
-                pass
+            except Exception as _e:
+                _log_error("[CLN]", _e)
 
         return None
 
@@ -1508,8 +1507,8 @@ def scan_mumu_instances(mumu_manager_path):
                                 inst["cpu"] = vm.get("cpu", "?")
                                 inst["memory"] = vm.get("memory", "?")
                                 inst["root"] = vm.get("root", "").lower() == "true"
-                        except Exception:
-                            pass
+                        except Exception as _e:
+                            _log_error("[CLN]", _e)
                         break
             return instances
     except Exception as e:
@@ -1538,7 +1537,8 @@ def scan_mumu_instances(mumu_manager_path):
                 continue
             try:
                 idx = entry.split("-")[-1]
-            except Exception:
+            except Exception as _e:
+                _log_error("[CLN]", _e)
                 continue
             if idx in seen_indices:
                 continue
@@ -1550,8 +1550,8 @@ def scan_mumu_instances(mumu_manager_path):
                 try:
                     with open(cfg_path, 'r', encoding='utf-8') as f:
                         vm_cfg = json.load(f)
-                except Exception:
-                    pass
+                except Exception as _e:
+                    _log_error("[CLN]", _e)
             vm = vm_cfg.get("vm", {})
             instances.append({
                 "index": idx,
@@ -1623,8 +1623,8 @@ def _auto_detect_mumu_path():
             line = line.strip()
             if line.lower().endswith('mumumanager.exe') and os.path.isfile(line):
                 return line
-    except Exception:
-        pass
+    except Exception as _e:
+        _log_error("[CLN]", _e)
     info = auto_detect_mumu()
     return info.get("manager_path")
 
@@ -1640,7 +1640,7 @@ def _find_adb_path(mumu_manager_path=None):
     1. MuMuManager.exe 同目录下的 adb.exe (nx_main/adb.exe)
     2. MuMu 安装目录 shell/ 下的 adb.exe
     3. MuMu 安装目录 shell/adb.exe
-    4. %ANDROID_HOME%\platform-tools\adb.exe
+    4. %ANDROID_HOME%\\platform-tools\adb.exe
     5. 环境变量 PATH 中的 adb
     返回: adb.exe 完整路径，找不到返回 None
     """
@@ -1745,8 +1745,8 @@ def check_mumu_boot_completed(index, timeout=30):
                 return True
         except subprocess.TimeoutExpired:
             pass
-        except Exception:
-            pass
+        except Exception as _e:
+            _log_error("[CLN]", _e)
 
         time.sleep(interval)
         elapsed += interval
@@ -1806,8 +1806,8 @@ def wait_mumu_ready(mumu_manager_path, index, timeout=180, check_interval=5):
                 if re.search(r'(?<![a-zA-Z0-9])' + re.escape(idx_str) + r'(?![a-zA-Z0-9])', line):
                     process_found = True
                     break
-        except Exception:
-            pass
+        except Exception as _e:
+            _log_error("[CLN]", _e)
 
         if not process_found:
             stage = "process_not_found"
@@ -1835,8 +1835,8 @@ def wait_mumu_ready(mumu_manager_path, index, timeout=180, check_interval=5):
                         "elapsed": elapsed,
                         "stage": "ready",
                     }
-            except Exception:
-                pass
+            except Exception as _e:
+                _log_error("[CLN]", _e)
 
     return {
         "success": False,
@@ -1965,8 +1965,8 @@ def _resolve_lnk_targets_batch(lnk_paths):
                     target = target.strip()
                     if target:
                         results[lnk] = target
-    except Exception:
-        pass
+    except Exception as _e:
+        _log_error("[CLN]", _e)
     return results
 
 
@@ -2000,7 +2000,7 @@ def find_emulator_from_shortcuts():
 
     candidate_lnks = []
     for scan_dir in scan_dirs:
-        for root, dirs, files in os.walk(scan_dir):
+        for root, _, files in os.walk(scan_dir):
             for fname in files:
                 if not fname.lower().endswith(".lnk"):
                     continue
@@ -2010,7 +2010,7 @@ def find_emulator_from_shortcuts():
 
     if candidate_lnks:
         targets = _resolve_lnk_targets_batch(candidate_lnks)
-        for lnk_path, target in targets.items():
+        for _, target in targets.items():
             lower = target.lower()
             if not result["ld_path"]:
                 if any(kw in lower for kw in _LD_KEYWORDS):
@@ -2064,16 +2064,15 @@ def start_mumu_health_monitor(mumu_manager_path, index, check_interval=1200, shu
     stop_event = threading.Event()
 
     def _monitor_loop():
-        # 第一次巡检：确保启动成功
+        # 实例已由调用方启动，这里只做定时巡检
         if on_status:
-            on_status(index, False, "正在启动实例...")
-        launch_result = launch_mumu_with_health_check(mumu_manager_path, index)
-        if not launch_result["success"]:
-            if on_status:
-                on_status(index, False, f"启动失败: {launch_result['message']}")
-            return
-        if on_status:
-            on_status(index, True, "启动成功，开始定时巡检")
+            on_status(index, True, "开始定时巡检")
+
+        # 重启控制：最多连续重启 3 次，每次间隔至少 60 秒
+        restart_count = 0
+        max_restarts = 3
+        min_cooldown = 60
+        last_restart_time = 0
 
         while not stop_event.is_set():
             # 检查是否到达关机时间（提前 1 分钟停止巡检）
@@ -2093,6 +2092,14 @@ def start_mumu_health_monitor(mumu_manager_path, index, check_interval=1200, shu
             # 执行健康检查
             adb_ok = check_mumu_adb_connection(index, timeout=10)
             if not adb_ok:
+                # 检查重启上限和冷却时间
+                now = time.time()
+                if restart_count >= max_restarts or (last_restart_time > 0 and now - last_restart_time < min_cooldown):
+                    if on_status:
+                        on_status(index, False, f"ADB 断连（已重启 {restart_count} 次，跳过本次）")
+                    continue
+                restart_count += 1
+                last_restart_time = now
                 if on_status:
                     on_status(index, False, "ADB 断连，准备重启...")
                 # 关闭后重新启动
@@ -2109,6 +2116,14 @@ def start_mumu_health_monitor(mumu_manager_path, index, check_interval=1200, shu
 
             boot_ok = check_mumu_boot_completed(index, timeout=15)
             if not boot_ok:
+                # 检查重启上限和冷却时间
+                now = time.time()
+                if restart_count >= max_restarts or (last_restart_time > 0 and now - last_restart_time < min_cooldown):
+                    if on_status:
+                        on_status(index, False, f"boot 丢失（已重启 {restart_count} 次，跳过本次）")
+                    continue
+                restart_count += 1
+                last_restart_time = now
                 if on_status:
                     on_status(index, False, "boot_completed 丢失，准备重启...")
                 shutdown_mumu_instance(mumu_manager_path, index)
@@ -2198,8 +2213,8 @@ def _find_mumu_error_dialog():
 
     try:
         user32.EnumWindows(_enum_callback, 0)
-    except Exception:
-        pass
+    except Exception as _e:
+        _log_error("[CLN]", _e)
     return result if result else None
 
 
