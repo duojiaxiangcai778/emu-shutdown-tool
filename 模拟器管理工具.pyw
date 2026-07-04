@@ -1258,7 +1258,7 @@ class EmulatorShutdownApp:
             _log_error(f"开机自动恢复快照失败: {e}")
         self._start_scan_loop()
         # 启动右侧日志面板刷新（每秒）
-        self.root.after(2000, self._refresh_log_display)
+        self.root.after(30000, self._refresh_log_display)
 
     # ---------- UI 构建 ----------
 
@@ -3689,17 +3689,19 @@ class EmulatorShutdownApp:
             pass
 
     def _refresh_log_display(self):
-        """刷新右侧日志面板（每秒调用一次）"""
+        """刷新右侧日志面板（每30秒追加新行）"""
         if not hasattr(self, '_log_text') or not self._log_text.winfo_exists():
             self._log_refresh_id = None
             return
         try:
-            with _LOG_BUFFER_LOCK:
-                lines = "".join(_LOG_BUFFER)
             self._log_text.configure(state="normal")
-            self._log_text.delete("1.0", "end")
-            self._log_text.insert("1.0", lines)
-            self._log_text.see("end")  # 滚动到底部
+            with _LOG_BUFFER_LOCK:
+                n = len(_LOG_BUFFER)
+                idx = getattr(self, '_log_displayed_count', 0)
+                if n > idx:
+                    self._log_text.insert("end", "".join(_LOG_BUFFER[idx:]))
+                    self._log_displayed_count = n
+            self._log_text.see("end")
             self._log_text.configure(state="disabled")
         except Exception as _e:
             pass
@@ -3708,7 +3710,7 @@ class EmulatorShutdownApp:
         if self._log_flush_counter >= 10:
             self._log_flush_counter = 0
             _flush_log()
-        self._log_refresh_id = self.root.after(2000, self._refresh_log_display)
+        self._log_refresh_id = self.root.after(30000, self._refresh_log_display)
 
     # ---------- MuMu 控制 ----------
 
