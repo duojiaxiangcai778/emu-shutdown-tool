@@ -2325,7 +2325,7 @@ class EmulatorShutdownApp:
                 self.root.after_cancel(self.scan_timer_id)
             except Exception as _e:
                 pass
-        self.scan_timer_id = self.root.after(3000, self._start_scan_loop)
+        self.scan_timer_id = self.root.after(30000, self._start_scan_loop)
 
     def _trigger_scan(self):
         if self._destroyed or self._emu_scan_pending:
@@ -3708,7 +3708,7 @@ class EmulatorShutdownApp:
         if self._log_flush_counter >= 10:
             self._log_flush_counter = 0
             _flush_log()
-        self._log_refresh_id = self.root.after(1000, self._refresh_log_display)
+        self._log_refresh_id = self.root.after(2000, self._refresh_log_display)
 
     # ---------- MuMu 控制 ----------
 
