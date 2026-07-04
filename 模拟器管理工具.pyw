@@ -3075,7 +3075,7 @@ class EmulatorShutdownApp:
 
             win = tk.Toplevel(self.root)
             win.title(f"MuMu-{inst['index']} {inst['name']}")
-            win.geometry("380x300")
+            win.geometry("440x500")
             win.configure(bg=BG)
             win.transient(self.root)
             win.grab_set()
@@ -3086,26 +3086,96 @@ class EmulatorShutdownApp:
             form = tk.Frame(win, bg=BG, padx=20)
             form.pack(fill="x")
 
-            # CPU
-            tk.Label(form, text="CPU核心:", font=("Microsoft YaHei", 10),
+            fields = {}
+
+            # 分辨率
+            tk.Label(form, text="分辨率:", font=("Microsoft YaHei", 10),
                      bg=BG, fg=TEXT, width=10, anchor="w").grid(row=0, column=0, pady=4, sticky="w")
+            res_frame = tk.Frame(form, bg=BG)
+            res_frame.grid(row=0, column=1, pady=4, sticky="w")
+            w_var = tk.StringVar(value=str(vm.get("width", "720")))
+            h_var = tk.StringVar(value=str(vm.get("height", "1280")))
+            tk.Entry(res_frame, textvariable=w_var, width=6, font=("Consolas", 10),
+                     bg=BG_LIGHT, fg=TEXT, relief="flat").pack(side="left")
+            tk.Label(res_frame, text="x", bg=BG, fg=TEXT).pack(side="left", padx=2)
+            tk.Entry(res_frame, textvariable=h_var, width=6, font=("Consolas", 10),
+                     bg=BG_LIGHT, fg=TEXT, relief="flat").pack(side="left")
+            fields['resolution'] = (w_var, h_var)
+
+            # DPI
+            tk.Label(form, text="DPI:", font=("Microsoft YaHei", 10),
+                     bg=BG, fg=TEXT, width=10, anchor="w").grid(row=1, column=0, pady=4, sticky="w")
+            dpi_var = tk.StringVar(value=str(vm.get("dpi", 240)))
+            tk.Entry(form, textvariable=dpi_var, width=10, font=("Consolas", 10),
+                     bg=BG_LIGHT, fg=TEXT, relief="flat").grid(
+                row=1, column=1, pady=4, sticky="w")
+            fields['dpi'] = dpi_var
+
+            # CPU
+            row = 2
+            tk.Label(form, text="CPU核心:", font=("Microsoft YaHei", 10),
+                     bg=BG, fg=TEXT, width=10, anchor="w").grid(row=row, column=0, pady=4, sticky="w")
             cpu_var = tk.StringVar(value=str(vm.get("cpu", "2")))
             tk.Spinbox(form, from_=1, to=16, textvariable=cpu_var, width=8,
-                       font=("Consolas", 10), bg=BG_LIGHT, fg=TEXT).grid(row=0, column=1, pady=4, sticky="w")
+                       font=("Consolas", 10), bg=BG_LIGHT, fg=TEXT).grid(row=row, column=1, pady=4, sticky="w")
+            fields['cpu'] = cpu_var
 
             # 内存
+            row = 3
             tk.Label(form, text="内存(MB):", font=("Microsoft YaHei", 10),
-                     bg=BG, fg=TEXT, width=10, anchor="w").grid(row=1, column=0, pady=4, sticky="w")
+                     bg=BG, fg=TEXT, width=10, anchor="w").grid(row=row, column=0, pady=4, sticky="w")
             mem_var = tk.StringVar(value=str(vm.get("memory", "2048")))
             tk.Spinbox(form, from_=256, to=16384, increment=256, textvariable=mem_var, width=8,
-                       font=("Consolas", 10), bg=BG_LIGHT, fg=TEXT).grid(row=1, column=1, pady=4, sticky="w")
+                       font=("Consolas", 10), bg=BG_LIGHT, fg=TEXT).grid(row=row, column=1, pady=4, sticky="w")
+            fields['memory'] = mem_var
 
             # Root
+            row = 4
             root_var = tk.BooleanVar(value=str(vm.get("root", "false")).lower() == "true")
             tk.Checkbutton(form, text="Root 权限", variable=root_var,
                            font=("Microsoft YaHei", 10), bg=BG, fg=TEXT,
                            selectcolor=CARD, activebackground=BG
-                           ).grid(row=2, column=0, columnspan=2, pady=4, sticky="w")
+                           ).grid(row=row, column=0, columnspan=2, pady=4, sticky="w")
+            fields['root'] = root_var
+
+            # 开机自动启动
+            row = 5
+            autorun_var = tk.BooleanVar(value=str(vm.get("auto_run", "false")).lower() == "true")
+            tk.Checkbutton(form, text="开机自动启动", variable=autorun_var,
+                           font=("Microsoft YaHei", 10), bg=BG, fg=TEXT,
+                           selectcolor=CARD, activebackground=BG
+                           ).grid(row=row, column=0, columnspan=2, pady=4, sticky="w")
+            fields['auto_run'] = autorun_var
+
+            # 帧率
+            row = 6
+            tk.Label(form, text="帧率:", font=("Microsoft YaHei", 10),
+                     bg=BG, fg=TEXT, width=10, anchor="w").grid(row=row, column=0, pady=4, sticky="w")
+            fps_var = tk.StringVar(value=str(vm.get("fps", "30")))
+            ttk.Combobox(form, textvariable=fps_var, values=["20", "30", "60", "120"],
+                         width=8, font=("Consolas", 10), state="readonly").grid(
+                row=row, column=1, pady=4, sticky="w")
+            fields['fps'] = fps_var
+
+            # 设备名
+            row = 7
+            tk.Label(form, text="设备名:", font=("Microsoft YaHei", 10),
+                     bg=BG, fg=TEXT, width=10, anchor="w").grid(row=row, column=0, pady=4, sticky="w")
+            name_var = tk.StringVar(value=str(vm.get("name", inst.get('name', ''))))
+            tk.Entry(form, textvariable=name_var, width=20, font=("Consolas", 10),
+                     bg=BG_LIGHT, fg=TEXT, relief="flat").grid(
+                row=row, column=1, pady=4, sticky="w")
+            fields['dev_name'] = name_var
+
+            # ADB 端口（只读）
+            row = 8
+            tk.Label(form, text="ADB端口:", font=("Microsoft YaHei", 10),
+                     bg=BG, fg=TEXT, width=10, anchor="w").grid(row=row, column=0, pady=4, sticky="w")
+            from ld_instance_manager import get_mumu_adb_port
+            adb_port = get_mumu_adb_port(inst['index'])
+            tk.Label(form, text=str(adb_port), font=("Consolas", 10),
+                     bg=BG_LIGHT, fg=TEXT_SUB, anchor="w", padx=4).grid(
+                row=row, column=1, pady=4, sticky="w")
 
             def _save_mumu():
                 if inst['running']:
@@ -3114,10 +3184,17 @@ class EmulatorShutdownApp:
                 try:
                     with open(vm_cfg_path, 'r', encoding='utf-8') as f:
                         cfg = json.load(f)
-                    cfg["vm"] = cfg.get("vm", {})
-                    cfg["vm"]["cpu"] = int(cpu_var.get())
-                    cfg["vm"]["memory"] = int(mem_var.get())
-                    cfg["vm"]["root"] = "true" if root_var.get() else "false"
+                    vm_new = cfg.get("vm", {})
+                    vm_new["cpu"] = int(fields['cpu'].get())
+                    vm_new["memory"] = int(fields['memory'].get())
+                    vm_new["root"] = "true" if fields['root'].get() else "false"
+                    vm_new["width"] = int(fields['resolution'][0].get())
+                    vm_new["height"] = int(fields['resolution'][1].get())
+                    vm_new["dpi"] = int(fields['dpi'].get())
+                    vm_new["auto_run"] = "true" if fields['auto_run'].get() else "false"
+                    vm_new["fps"] = int(fields['fps'].get())
+                    vm_new["name"] = fields['dev_name'].get()
+                    cfg["vm"] = vm_new
                     with open(vm_cfg_path, 'w', encoding='utf-8') as f:
                         json.dump(cfg, f, ensure_ascii=False, indent=2)
                     messagebox.showinfo("成功", f"MuMu-{inst['index']} 设置已保存")
