@@ -3126,10 +3126,14 @@ class EmulatorShutdownApp:
             row = 3
             tk.Label(form, text="内存(MB):", font=("Microsoft YaHei", 10),
                      bg=BG, fg=TEXT, width=10, anchor="w").grid(row=row, column=0, pady=4, sticky="w")
-            mem_var = tk.StringVar(value=str(
-                vm.get("memory", vm.get("memory_mb", vm.get("mem_size",
-                    vm.get("ram", inst.get('memory', "2048"))))
-            )))
+            # 内存：vm_config.json 存的是 GB（如 "6.000000"），显示为 MB
+            mem_gb = vm.get("memory", vm.get("memory_mb", vm.get("mem_size",
+                         vm.get("ram", inst.get('memory', "4")))))
+            try:
+                mem_mb = int(float(str(mem_gb)) * 1024)
+            except (ValueError, TypeError):
+                mem_mb = 4096
+            mem_var = tk.StringVar(value=str(mem_mb))
             tk.Spinbox(form, from_=256, to=16384, increment=256, textvariable=mem_var, width=8,
                        font=("Consolas", 10), bg=BG_LIGHT, fg=TEXT).grid(row=row, column=1, pady=4, sticky="w")
             fields['memory'] = mem_var
@@ -3191,7 +3195,7 @@ class EmulatorShutdownApp:
                         cfg = json.load(f)
                     vm_new = cfg.get("vm", {})
                     vm_new["cpu"] = int(fields['cpu'].get())
-                    vm_new["memory"] = int(fields['memory'].get())
+                    vm_new["memory"] = f"{float(fields['memory'].get()) / 1024:.6f}"
                     vm_new["root"] = "true" if fields['root'].get() else "false"
                     vm_new["width"] = int(fields['resolution'][0].get())
                     vm_new["height"] = int(fields['resolution'][1].get())
