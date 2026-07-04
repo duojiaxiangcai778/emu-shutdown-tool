@@ -2089,6 +2089,9 @@ def start_mumu_health_monitor(mumu_manager_path, index, check_interval=1200, shu
                     return
                 time.sleep(1)
 
+            # 自动点击 MuMu 错误弹窗的「重启」按钮
+            auto_restart_mumu_on_error()
+
             # 执行健康检查
             adb_ok = check_mumu_adb_connection(index, timeout=10)
             if not adb_ok:
@@ -2216,5 +2219,40 @@ def _find_mumu_error_dialog():
     except Exception as _e:
         pass
     return result if result else None
+
+
+def _click_mumu_restart(dialog_hwnd):
+    """在 MuMu 错误弹窗中查找并点击「重启」按钮。
+    返回 True 表示已点击，False 表示没找到。
+    """
+    user32 = ctypes.windll.user32
+    BM_CLICK = 0x00F5
+    child = None
+    while True:
+        child = user32.FindWindowExW(dialog_hwnd, child, "Button", None)
+        if not child:
+            break
+        clen = user32.GetWindowTextLengthW(child)
+        if clen > 0:
+            buf = ctypes.create_unicode_buffer(clen + 1)
+            user32.GetWindowTextW(child, buf, clen + 1)
+            if "重启" in buf.value:
+                user32.PostMessageW(child, BM_CLICK, 0, 0)
+                return True
+    return False
+
+
+def auto_restart_mumu_on_error():
+    """扫描 MuMu 错误弹窗，发现后自动点击重启。
+    返回已处理的弹窗数。
+    """
+    dialogs = _find_mumu_error_dialog()
+    if not dialogs:
+        return 0
+    count = 0
+    for hwnd, _ in dialogs:
+        if _click_mumu_restart(hwnd):
+            count += 1
+    return count
 
 
