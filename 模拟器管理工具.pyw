@@ -2004,22 +2004,17 @@ class EmulatorShutdownApp:
         ui["act_btn"].config(command=_toggle)
         task["vars"] = ui
 
-        # 5秒测试按钮
+        # 5秒测试按钮（完全独立，不碰原任务状态）
         def _test_5s():
-            if task["running"]:
-                _stop()
-            task["target_ts"] = time.time() + 5
-            task["remaining"] = 5
-            task["running"] = True
-            _tu_fn = task.get("_time_up_fn")
-            _upd_fn = task.get("_update_fn")
-            if _tu_fn and _upd_fn:
-                task["thread"] = threading.Thread(
-                    target=self._make_loop_fn(task, _tu_fn, _upd_fn), daemon=True)
-                task["thread"].start()
-            task["vars"]["act_btn"].config_bg(TEXT_LIGHT)
-            task["vars"]["act_btn"].set_text("||")
-            task["vars"]["st_lbl"].config(text="00:00:05", fg=YELLOW)
+            self._toast(f"测试-关闭任务", "5秒后执行优雅关闭", 3000)
+            self.root.after(5000, lambda: graceful_kill_async(
+                on_done=lambda c, s, fc, fn, _, se:
+                    self._toast("测试完成", f"进程: {s}/{c} {'关机执行' if se else '未关机'}", 5000),
+                do_backup=False,
+                do_shutdown=self.shutdown_var.get(),
+                should_restart=self.restart_var.get(),
+                mumu_vms_dir=self._get_mumu_vms_dir(),
+            ))
         RoundedButton(ui["row"], text="5s", command=_test_5s,
                       bg=ACCENT, fg="white",
                       font=("Consolas", 9), padx=4, pady=0).pack(side="right", padx=(2, 0))
@@ -2189,25 +2184,14 @@ class EmulatorShutdownApp:
         if _inst_btn_ref[0]:
             task["vars"]["inst_btn"] = _inst_btn_ref[0]
 
-        # 5秒测试按钮
+        # 5秒测试按钮（完全独立，不碰原任务状态）
         def _test_5s():
-            if task["running"]:
-                _stop()
-            if not task.get("instances"):
-                self._toast("定时启动", "请先选择实例", 3000)
+            instances = task.get("instances", [])
+            if not instances:
+                self._toast("测试-启动", "请先选择实例", 3000)
                 return
-            task["target_ts"] = time.time() + 5
-            task["remaining"] = 5
-            task["running"] = True
-            _tu_fn = task.get("_time_up_fn")
-            _upd_fn = task.get("_update_fn")
-            if _tu_fn and _upd_fn:
-                task["thread"] = threading.Thread(
-                    target=self._make_loop_fn(task, _tu_fn, _upd_fn), daemon=True)
-                task["thread"].start()
-            task["vars"]["act_btn"].config_bg(TEXT_LIGHT)
-            task["vars"]["act_btn"].set_text("||")
-            task["vars"]["st_lbl"].config(text="00:00:05", fg=YELLOW)
+            self._toast(f"测试-启动", f"5秒后启动 {len(instances)} 个实例", 3000)
+            self.root.after(5000, lambda: self._exec_test_launch(instances))
         RoundedButton(ui["row"], text="5s", command=_test_5s,
                       bg=ACCENT, fg="white",
                       font=("Consolas", 9), padx=4, pady=0).pack(side="right", padx=(2, 0))
@@ -2326,6 +2310,22 @@ class EmulatorShutdownApp:
         self._inline_start_task(t, GREEN, t.get("_time_up_fn"), t.get("_update_fn"))
     def _autoreset_launch(self, t):
         self._auto_reset_task(t, GREEN, GREEN)
+
+    def _exec_test_launch(self, instances):
+        """5s测试启动：直接启动选中的实例"""
+        import threading as _th
+        def _work():
+            from ld_instance_manager import staggered_launch
+            dnconsole = self._ld_paths.get("dnconsole")
+            if not dnconsole or not os.path.isfile(dnconsole):
+                self.root.after(0, lambda: self._toast("测试-启动", "未找到 dnconsole", 4000))
+                return
+            result = staggered_launch(dnconsole, instances, interval_seconds=5)
+            succ = sum(1 for r in result.values() if r.get("success"))
+            fail = len(result) - succ
+            self.root.after(0, lambda: self._toast(
+                "测试完成", f"启动: {succ}/{len(result)} 个实例" + (f" 失败{fail}" if fail else ""), 5000))
+        _th.Thread(target=_work, daemon=True).start()
 
     def _stop_all_launch(self):
         """停止所有定时启动任务"""
