@@ -683,12 +683,17 @@ def graceful_kill_async(on_done, on_status=None, on_progress=None,
                     save_snapshot(cfg_vms, multiplayer_config_dir, SNAPSHOT_DIR, mumu_vms_dir=mumu_vms_dir)
 
             if not procs:
+                _log_info("gka: 无进程, 直接走关机路径")
                 elapsed = int(time.time() - start_ts)
                 _progress(elapsed)
                 if do_shutdown:
+                    _log_info("gka: 开始关机倒计时...")
                     _do_shutdown_countdown(should_restart, _status, _progress, TOTAL, start_ts)
                     shutdown_executed = True
+                    _log_info(f"gka: 关机倒计时结束, shutdown_executed={shutdown_executed}")
+                _log_info(f"gka: 调用 on_done (count=0 success=0)")
                 on_done(0, 0, 0, [], backup_msg, shutdown_executed)
+                _log_info("gka: on_done 返回")
                 return
 
             # ---- 阶段1：dnconsole quitall（LDPlayer 优雅关闭）----
