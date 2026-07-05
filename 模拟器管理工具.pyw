@@ -3396,50 +3396,53 @@ class EmulatorShutdownApp:
 
     def _save_snapshot(self):
         """保存配置快照"""
-        vms_cfg = self._ld_paths.get("vms_config_dir")
-        mp_cfg = None
-        mp = self._ld_paths.get("multiplayer_path")
-        if not vms_cfg or not mp:
-            _cfg_path = self._find_config_file()
-            if _cfg_path:
-                try:
-                    with open(_cfg_path, 'r', encoding='utf-8') as _f:
-                        _saved = json.load(_f)
-                    sp = _saved.get("paths", {})
-                    if not vms_cfg:
-                        vms_cfg = sp.get("vms_config_dir")
-                    if not vms_cfg:
-                        ld = sp.get("ld_path") or vms_cfg
-                        if ld:
-                            for p in [os.path.join(ld, "vms", "config"), os.path.join(ld, "vms")]:
-                                if os.path.isdir(p):
-                                    vms_cfg = p; break
-                    if not mp:
-                        mp = sp.get("multiplayer_path")
-                    if not self._mumu_path:
-                        self._mumu_path = _saved.get("mumu_manager_path", "")
-                except Exception as _e:
-                    pass
-            # 配置文件也没有 → 自动搜索
+        try:
+            vms_cfg = self._ld_paths.get("vms_config_dir")
+            mp_cfg = None
+            mp = self._ld_paths.get("multiplayer_path")
             if not vms_cfg or not mp:
-                from ld_instance_manager import auto_detect_paths
-                detected = auto_detect_paths()
-                if not vms_cfg and detected.get("vms_config_dir"):
-                    vms_cfg = detected["vms_config_dir"]
-                if not mp and detected.get("multiplayer_path"):
-                    mp = detected["multiplayer_path"]
-                if not self._mumu_path and detected.get("mumu_manager_path"):
-                    self._mumu_path = detected["mumu_manager_path"]
-        if mp:
-            mp_cfg = os.path.join(mp, "vms", "config")
+                _cfg_path = self._find_config_file()
+                if _cfg_path:
+                    try:
+                        with open(_cfg_path, 'r', encoding='utf-8') as _f:
+                            _saved = json.load(_f)
+                        sp = _saved.get("paths", {})
+                        if not vms_cfg:
+                            vms_cfg = sp.get("vms_config_dir")
+                        if not vms_cfg:
+                            ld = sp.get("ld_path") or vms_cfg
+                            if ld:
+                                for p in [os.path.join(ld, "vms", "config"), os.path.join(ld, "vms")]:
+                                    if os.path.isdir(p):
+                                        vms_cfg = p; break
+                        if not mp:
+                            mp = sp.get("multiplayer_path")
+                        if not self._mumu_path:
+                            self._mumu_path = _saved.get("mumu_manager_path", "")
+                    except Exception as _e:
+                        pass
+                if not vms_cfg or not mp:
+                    from ld_instance_manager import auto_detect_paths
+                    detected = auto_detect_paths()
+                    if not vms_cfg and detected.get("vms_config_dir"):
+                        vms_cfg = detected["vms_config_dir"]
+                    if not mp and detected.get("multiplayer_path"):
+                        mp = detected["multiplayer_path"]
+                    if not self._mumu_path and detected.get("mumu_manager_path"):
+                        self._mumu_path = detected["mumu_manager_path"]
+            if mp:
+                mp_cfg = os.path.join(mp, "vms", "config")
 
-        snap_dir, msg = save_snapshot(vms_cfg, mp_cfg, SNAPSHOT_DIR, mumu_vms_dir=self._get_mumu_vms_dir())
-        if snap_dir:
-            _log_info(f"保存快照成功: {msg}")
-            self._toast("保存成功", msg)
-        else:
-            _log_error(f"保存快照失败: vms_cfg={vms_cfg} mp_cfg={mp_cfg} msg={msg}")
-            self._toast("保存失败", msg, 4000)
+            snap_dir, msg = save_snapshot(vms_cfg, mp_cfg, SNAPSHOT_DIR, mumu_vms_dir=self._get_mumu_vms_dir())
+            if snap_dir:
+                _log_info(f"保存快照成功: {msg}")
+                self._toast("保存成功", msg)
+            else:
+                _log_error(f"保存快照失败: vms_cfg={vms_cfg} mp_cfg={mp_cfg} msg={msg}")
+                self._toast("保存失败", msg, 4000)
+        except Exception as e:
+            _log_error(f"保存快照异常: {e}")
+            messagebox.showerror("保存失败", f"保存快照时发生异常:\n{e}")
 
     def _restore_snapshot(self):
         """恢复配置快照"""
