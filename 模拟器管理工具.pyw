@@ -1266,7 +1266,7 @@ class EmulatorShutdownApp:
             _log_error(f"开机自动恢复快照失败: {e}")
         self._start_scan_loop()
         # 启动右侧日志面板刷新（每秒）
-        self.root.after(30000, self._refresh_log_display)
+        self.root.after(5000, self._refresh_log_display)
 
     # ---------- UI 构建 ----------
 
@@ -3958,7 +3958,7 @@ class EmulatorShutdownApp:
         if self._log_flush_counter >= 10:
             self._log_flush_counter = 0
             _flush_log()
-        self._log_refresh_id = self.root.after(30000, self._refresh_log_display)
+        self._log_refresh_id = self.root.after(5000, self._refresh_log_display)
 
     # ---------- MuMu 控制 ----------
 
