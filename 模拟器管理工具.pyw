@@ -1997,6 +1997,17 @@ class EmulatorShutdownApp:
                                    on_delete=_delete)
         ui["act_btn"].config(command=_toggle)
         task["vars"] = ui
+
+        # 5秒测试按钮
+        def _test_5s():
+            if task["running"]:
+                _stop()
+            task["target_ts"] = time.time() + 5
+            task["remaining"] = 5
+            _start()
+        RoundedButton(ui["row"], text="5s", command=_test_5s,
+                      bg=ACCENT, fg="white",
+                      font=("Consolas", 9), padx=4, pady=0).pack(side="right", padx=(2, 0))
         return task
 
     # ---------- 任务管理 ----------
@@ -2162,6 +2173,19 @@ class EmulatorShutdownApp:
         if _inst_btn_ref[0]:
             task["vars"]["inst_btn"] = _inst_btn_ref[0]
 
+        # 5秒测试按钮
+        def _test_5s():
+            if task["running"]:
+                _stop()
+            if not task.get("instances"):
+                self._toast("定时启动", "请先选择实例", 3000)
+                return
+            task["target_ts"] = time.time() + 5
+            task["remaining"] = 5
+            _start()
+        RoundedButton(ui["row"], text="5s", command=_test_5s,
+                      bg=ACCENT, fg="white",
+                      font=("Consolas", 9), padx=4, pady=0).pack(side="right", padx=(2, 0))
         return task
 
     def _pick_instances(self, task, btn):
