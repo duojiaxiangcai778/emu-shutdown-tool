@@ -1947,17 +1947,21 @@ class EmulatorShutdownApp:
         def _time_up(t):
             if not t["running"]:
                 return
+            _log_info(f"定时执行: id={t.get('id')} 类型={t.get('type')}")
             t["running"] = False
             t["vars"]["act_btn"].config_bg(color); t["vars"]["act_btn"].set_text("▶")
             t["vars"]["st_lbl"].config(text="执行中...", fg=YELLOW)
             should_shutdown = self.shutdown_var.get()
-            def _on_done(count, success, fail_count, failed_names, _, __):
+            _log_info(f"定时执行: should_shutdown={should_shutdown}")
+            def _on_done(count, success, fail_count, failed_names, _, shutdown_executed):
+                _log_info(f"定时执行完成: id={t.get('id')} count={count} success={success} shutdown_executed={shutdown_executed}")
                 def _ui():
                     t["vars"]["st_lbl"].config(
                         text=f"完成 {success}/{count}" if count > 0 else "无进程",
                         fg=GREEN if fail_count == 0 else YELLOW)
-                    if should_shutdown and success > 0:
+                    if shutdown_executed:
                         t["vars"]["st_lbl"].config(text="关机中...", fg=RED)
+                        t["vars"]["act_btn"].config_bg(color); t["vars"]["act_btn"].set_text("▶")
                     elif t["mode"] == "fixed":
                         t["auto_reset_id"] = self.root.after(2000, lambda: self._auto_reset_task(t, RED, PRIMARY))
                     self._save_tasks_config()
