@@ -3471,20 +3471,52 @@ class EmulatorShutdownApp:
             listbox.insert(tk.END, f"  {snap['name']}  ({snap['instance_count']}个实例)")
 
         def _do_restore():
-            sel = listbox.curselection()
-            if not sel:
-                messagebox.showinfo("提示", "请选一个快照")
-                return
-            snap = snapshots[sel[0]]
-            vms_cfg = self._ld_paths.get("vms_config_dir")
-            mp_cfg = None
-            mp = self._ld_paths.get("multiplayer_path")
-            if mp:
-                mp_cfg = os.path.join(mp, "vms", "config")
-            count, msg = restore_snapshot(snap['path'], vms_cfg, mp_cfg, mumu_vms_dir=self._get_mumu_vms_dir())
-            messagebox.showinfo("恢复完成", msg)
-            win.destroy()
-            self._scan_and_display_instances()
+            try:
+                sel = listbox.curselection()
+                if not sel:
+                    messagebox.showinfo("提示", "请选一个快照")
+                    return
+                snap = snapshots[sel[0]]
+
+                # 路径后备：同 _save_snapshot 逻辑
+                vms_cfg = self._ld_paths.get("vms_config_dir")
+                mp = self._ld_paths.get("multiplayer_path")
+                if not vms_cfg or not mp:
+                    _cfg_path = self._find_config_file()
+                    if _cfg_path:
+                        try:
+                            with open(_cfg_path, 'r', encoding='utf-8') as _f:
+                                _saved = json.load(_f)
+                            sp = _saved.get("paths", {})
+                            if not vms_cfg:
+                                vms_cfg = sp.get("vms_config_dir")
+                            if not vms_cfg:
+                                ld = sp.get("ld_path") or vms_cfg
+                                if ld:
+                                    for p in [os.path.join(ld, "vms", "config"), os.path.join(ld, "vms")]:
+                                        if os.path.isdir(p):
+                                            vms_cfg = p; break
+                            if not mp:
+                                mp = sp.get("multiplayer_path")
+                        except Exception:
+                            pass
+                    if not vms_cfg or not mp:
+                        from ld_instance_manager import auto_detect_paths
+                        detected = auto_detect_paths()
+                        if not vms_cfg and detected.get("vms_config_dir"):
+                            vms_cfg = detected["vms_config_dir"]
+                        if not mp and detected.get("multiplayer_path"):
+                            mp = detected["multiplayer_path"]
+                mp_cfg = os.path.join(mp, "vms", "config") if mp else None
+
+                count, msg = restore_snapshot(snap['path'], vms_cfg, mp_cfg, mumu_vms_dir=self._get_mumu_vms_dir())
+                _log_info(f"恢复快照: {msg}（快照={snap['name']}）")
+                messagebox.showinfo("恢复完成", msg)
+                win.destroy()
+                self._scan_and_display_instances()
+            except Exception as e:
+                _log_error(f"恢复快照异常: {e}")
+                messagebox.showerror("恢复失败", f"恢复快照时发生异常:\n{e}")
 
         RoundedButton(win, text="恢复", command=_do_restore,
                       bg=GREEN, fg="white", font=("Microsoft YaHei", 10, "bold"),
