@@ -2004,7 +2004,16 @@ class EmulatorShutdownApp:
                 _stop()
             task["target_ts"] = time.time() + 5
             task["remaining"] = 5
-            _start()
+            task["running"] = True
+            _tu_fn = task.get("_time_up_fn")
+            _upd_fn = task.get("_update_fn")
+            if _tu_fn and _upd_fn:
+                task["thread"] = threading.Thread(
+                    target=self._make_loop_fn(task, _tu_fn, _upd_fn), daemon=True)
+                task["thread"].start()
+            task["vars"]["act_btn"].config_bg(TEXT_LIGHT)
+            task["vars"]["act_btn"].set_text("||")
+            task["vars"]["st_lbl"].config(text="00:00:05", fg=YELLOW)
         RoundedButton(ui["row"], text="5s", command=_test_5s,
                       bg=ACCENT, fg="white",
                       font=("Consolas", 9), padx=4, pady=0).pack(side="right", padx=(2, 0))
@@ -2182,7 +2191,16 @@ class EmulatorShutdownApp:
                 return
             task["target_ts"] = time.time() + 5
             task["remaining"] = 5
-            _start()
+            task["running"] = True
+            _tu_fn = task.get("_time_up_fn")
+            _upd_fn = task.get("_update_fn")
+            if _tu_fn and _upd_fn:
+                task["thread"] = threading.Thread(
+                    target=self._make_loop_fn(task, _tu_fn, _upd_fn), daemon=True)
+                task["thread"].start()
+            task["vars"]["act_btn"].config_bg(TEXT_LIGHT)
+            task["vars"]["act_btn"].set_text("||")
+            task["vars"]["st_lbl"].config(text="00:00:05", fg=YELLOW)
         RoundedButton(ui["row"], text="5s", command=_test_5s,
                       bg=ACCENT, fg="white",
                       font=("Consolas", 9), padx=4, pady=0).pack(side="right", padx=(2, 0))
