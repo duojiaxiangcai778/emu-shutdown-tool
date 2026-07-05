@@ -2091,6 +2091,8 @@ def start_mumu_health_monitor(mumu_manager_path, index, check_interval=1200, shu
 
             # 自动点击 MuMu 错误弹窗的「重启」按钮
             auto_restart_mumu_on_error()
+            # 自动点击 Android 内部「运行终止」弹窗
+            adb_detect_and_restart(index)
 
             # 执行健康检查
             adb_ok = check_mumu_adb_connection(index, timeout=10)
@@ -2255,4 +2257,40 @@ def auto_restart_mumu_on_error():
             count += 1
     return count
 
+
+def adb_tap_restart_button(adb_port):
+    """通过 ADB uiautomator 在 Android 界面查找并点击「立即重启」按钮。
+    返回 True 表示已点击，False 表示没找到按钮。
+    """
+    adb_cmd = ["adb", "-s", f"127.0.0.1:{adb_port}"]
+    try:
+        subprocess.run(adb_cmd + ["shell", "uiautomator", "dump", "/sdcard/ui.xml"],
+                       timeout=10, capture_output=True)
+        r = subprocess.run(adb_cmd + ["shell", "cat", "/sdcard/ui.xml"],
+                           timeout=10, capture_output=True)
+        raw = r.stdout.decode('utf-8', errors='replace')
+    except Exception:
+        return False
+
+    import re
+    for m in re.finditer(r'text="([^"]*)"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', raw):
+        text = m.group(1)
+        if "\u91cd\u542f" in text:  # 重启
+            x1, y1, x2, y2 = int(m.group(2)), int(m.group(3)), int(m.group(4)), int(m.group(5))
+            cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+            try:
+                subprocess.run(adb_cmd + ["shell", "input", "tap", str(cx), str(cy)],
+                               timeout=5, capture_output=True)
+                return True
+            except Exception:
+                return False
+    return False
+
+
+def adb_detect_and_restart(index):
+    """检测 MuMu 实例是否有「运行终止」弹窗，有则自动点击重启。"""
+    port = get_mumu_adb_port(index)
+    if not port:
+        return False
+    return adb_tap_restart_button(port)
 
