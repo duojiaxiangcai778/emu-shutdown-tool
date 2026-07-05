@@ -1247,6 +1247,14 @@ class EmulatorShutdownApp:
                             vms = _saved.get("paths", {}).get("vms_config_dir")
                         if not mp:
                             mp = _saved.get("paths", {}).get("multiplayer_path")
+                # 最后手段：自动搜索
+                if not vms or not mp:
+                    from ld_instance_manager import auto_detect_paths
+                    detected = auto_detect_paths()
+                    if not vms and detected.get("vms_config_dir"):
+                        vms = detected["vms_config_dir"]
+                    if not mp and detected.get("multiplayer_path"):
+                        mp = detected["multiplayer_path"]
                 mp_cfg = os.path.join(mp, "vms", "config") if mp and os.path.isdir(os.path.join(mp, "vms", "config")) else None
                 # restore_snapshot 返回 (成功数, 消息)
                 count, msg = restore_snapshot(latest["path"], vms, mp_cfg, mumu_vms_dir=self._get_mumu_vms_dir())
