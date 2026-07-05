@@ -691,7 +691,7 @@ def graceful_kill_async(on_done, on_status=None, on_progress=None,
                     _do_shutdown_countdown(should_restart, _status, _progress, TOTAL, start_ts)
                     shutdown_executed = True
                     _log_info(f"gka: 关机倒计时结束, shutdown_executed={shutdown_executed}")
-                _log_info(f"gka: 调用 on_done (count=0 success=0)")
+                _log_info("gka: 调用 on_done (count=0 success=0)")
                 on_done(0, 0, 0, [], backup_msg, shutdown_executed)
                 _log_info("gka: on_done 返回")
                 return
@@ -2006,7 +2006,7 @@ class EmulatorShutdownApp:
 
         # 5秒测试按钮（完全独立，不碰原任务状态）
         def _test_5s():
-            self._toast(f"测试-关闭任务", "5秒后执行优雅关闭", 3000)
+            self._toast("测试-关闭任务", "5秒后执行优雅关闭", 3000)
             self.root.after(5000, lambda: graceful_kill_async(
                 on_done=lambda c, s, fc, fn, _, se:
                     self._toast("测试完成", f"进程: {s}/{c} {'关机执行' if se else '未关机'}", 5000),
@@ -2190,7 +2190,7 @@ class EmulatorShutdownApp:
             if not instances:
                 self._toast("测试-启动", "请先选择实例", 3000)
                 return
-            self._toast(f"测试-启动", f"5秒后启动 {len(instances)} 个实例", 3000)
+            self._toast("测试-启动", f"5秒后启动 {len(instances)} 个实例", 3000)
             self.root.after(5000, lambda: self._exec_test_launch(instances))
         RoundedButton(ui["row"], text="5s", command=_test_5s,
                       bg=ACCENT, fg="white",

@@ -7,7 +7,7 @@
     "dnmultiplayerex": "D:\\E\\ldmutiplayer\\dnmultiplayerex.exe"
   },
   "auto_launch_instances": [
-    "leidian0"
+    "2"
   ],
   "mumu_manager_path": "D:\\E\\MuMu Player 12\\nx_main\\MuMuManager.exe",
   "shutdown_tasks": [],
@@ -18,6 +18,6 @@
   "dialog_geometry": {
     "snapshot_list": "560x400+0+0"
   },
-  "mumu_health_check": false,
-  "mumu_health_interval": 20
+  "mumu_health_check": true,
+  "mumu_health_interval": 15
 }
