@@ -1956,6 +1956,7 @@ class EmulatorShutdownApp:
             t["running"] = False
             t["vars"]["act_btn"].config_bg(color); t["vars"]["act_btn"].set_text("▶")
             t["vars"]["st_lbl"].config(text="执行中...", fg=YELLOW)
+            self._save_tasks_config()
             should_shutdown = self.shutdown_var.get()
             _log_info(f"定时执行: should_shutdown={should_shutdown}")
             def _on_done(count, success, fail_count, failed_names, _, shutdown_executed):
@@ -2100,6 +2101,7 @@ class EmulatorShutdownApp:
             t["running"] = False
             t["vars"]["act_btn"].config_bg(color); t["vars"]["act_btn"].set_text("▶")
             t["vars"]["st_lbl"].config(text="启动中...", fg=YELLOW)
+            self._save_tasks_config()
 
             dnconsole = self._ld_paths.get("dnconsole")
             if not dnconsole or not os.path.isfile(dnconsole):
@@ -4510,7 +4512,7 @@ def main():
         # 确保所有 UI 渲染完成后再显示
         root.update_idletasks()
         if no_window:
-            root.withdraw()
+            root.iconify()
         else:
             root.deiconify()
         root.mainloop()
