@@ -3051,8 +3051,8 @@ class EmulatorShutdownApp:
         is_mumu = ('settings' not in inst or not inst.get('settings')
                    or 'config_path' not in inst or not inst.get('config_path'))
         if is_mumu:
-            # 定位 vm_config.json
-            vm_cfg_path = None
+            # 定位实例的 configs 目录
+            cfg_dir = None
             if self._mumu_path:
                 mgr_dir = os.path.dirname(self._mumu_path)
                 install_dir = os.path.dirname(mgr_dir)
@@ -3060,20 +3060,56 @@ class EmulatorShutdownApp:
                 for d in [os.path.join(install_dir, "vms"),
                           os.path.join(ud, "MuMu12", "vms"),
                           os.path.join(ud, "MuMuPlayer-12.0", "vms")]:
-                    p = os.path.join(d, f"MuMuPlayer-12.0-{inst['index']}", "configs", "vm_config.json")
-                    if os.path.isfile(p):
-                        vm_cfg_path = p; break
-            if not vm_cfg_path:
-                messagebox.showinfo("提示", "找不到 MuMu 实例配置文件")
+                    p = os.path.join(d, f"MuMuPlayer-12.0-{inst['index']}", "configs")
+                    if os.path.isdir(p):
+                        cfg_dir = p; break
+            if not cfg_dir:
+                messagebox.showinfo("提示", "找不到 MuMu 实例配置目录")
                 return
+
+            # 读取各配置文件
+            vm_path = os.path.join(cfg_dir, "vm_config.json")
+            shell_path = os.path.join(cfg_dir, "shell_config.json")
+            extra_path = os.path.join(cfg_dir, "extra_config.json")
+
+            vm = {}
+            shell = {}
+            extra = {}
             try:
-                with open(vm_cfg_path, 'r', encoding='utf-8') as f:
+                with open(vm_path, 'r', encoding='utf-8') as f:
                     vm = json.load(f).get("vm", {})
-                # 调试：打印 vm 字段帮助确认结构
-                _log_info(f"[MUMU_EDIT] vm keys: {list(vm.keys())}")
-            except Exception as e:
-                messagebox.showerror("错误", f"读取配置失败: {e}")
-                return
+            except Exception:
+                pass
+            try:
+                with open(shell_path, 'r', encoding='utf-8') as f:
+                    shell = json.load(f)
+            except Exception:
+                pass
+            try:
+                with open(extra_path, 'r', encoding='utf-8') as f:
+                    extra = json.load(f)
+            except Exception:
+                pass
+
+            # 从 shell_config 读取分辨率/帧率/DPI
+            renderer = shell.get("renderer", {})
+            shell_res = renderer.get("resolution", {})
+            res_w = str(int(float(shell_res.get("width", 1920))))
+            res_h = str(int(float(shell_res.get("height", 1080))))
+            res_dpi = str(int(float(shell_res.get("dpi", 280))))
+            fps_val = str(int(float(renderer.get("fps_limit", renderer.get("fps_limit_real", 60)))))
+
+            # 从 extra_config 读取设备名
+            dev_name = extra.get("playerName", inst.get('name', ''))
+
+            # 从 vm_config 读取 CPU/内存/Root
+            cpu_val = str(vm.get("cpu", inst.get('cpu', "4")))
+            mem_gb = vm.get("memory", inst.get('memory', "4"))
+            try:
+                mem_mb = int(float(str(mem_gb)) * 1024)
+            except (ValueError, TypeError):
+                mem_mb = 4096
+            root_val = str(vm.get("root", "false")).lower() == "true"
 
             win = tk.Toplevel(self.root)
             win.title(f"MuMu-{inst['index']} {inst['name']}")
@@ -3095,8 +3131,8 @@ class EmulatorShutdownApp:
                      bg=BG, fg=TEXT, width=10, anchor="w").grid(row=0, column=0, pady=4, sticky="w")
             res_frame = tk.Frame(form, bg=BG)
             res_frame.grid(row=0, column=1, pady=4, sticky="w")
-            w_var = tk.StringVar(value=str(vm.get("width", "720")))
-            h_var = tk.StringVar(value=str(vm.get("height", "1280")))
+            w_var = tk.StringVar(value=res_w)
+            h_var = tk.StringVar(value=res_h)
             tk.Entry(res_frame, textvariable=w_var, width=6, font=("Consolas", 10),
                      bg=BG_LIGHT, fg=TEXT, relief="flat").pack(side="left")
             tk.Label(res_frame, text="x", bg=BG, fg=TEXT).pack(side="left", padx=2)
@@ -3107,7 +3143,7 @@ class EmulatorShutdownApp:
             # DPI
             tk.Label(form, text="DPI:", font=("Microsoft YaHei", 10),
                      bg=BG, fg=TEXT, width=10, anchor="w").grid(row=1, column=0, pady=4, sticky="w")
-            dpi_var = tk.StringVar(value=str(vm.get("dpi", 240)))
+            dpi_var = tk.StringVar(value=res_dpi)
             tk.Entry(form, textvariable=dpi_var, width=10, font=("Consolas", 10),
                      bg=BG_LIGHT, fg=TEXT, relief="flat").grid(
                 row=1, column=1, pady=4, sticky="w")
@@ -3117,22 +3153,15 @@ class EmulatorShutdownApp:
             row = 2
             tk.Label(form, text="CPU核心:", font=("Microsoft YaHei", 10),
                      bg=BG, fg=TEXT, width=10, anchor="w").grid(row=row, column=0, pady=4, sticky="w")
-            cpu_var = tk.StringVar(value=str(vm.get("cpu", inst.get('cpu', "2"))))
+            cpu_var = tk.StringVar(value=cpu_val)
             tk.Spinbox(form, from_=1, to=16, textvariable=cpu_var, width=8,
                        font=("Consolas", 10), bg=BG_LIGHT, fg=TEXT).grid(row=row, column=1, pady=4, sticky="w")
             fields['cpu'] = cpu_var
 
-            # 内存
+            # 内存：vm_config.json 存的是 GB（如 "6.000000"），显示为 MB
             row = 3
             tk.Label(form, text="内存(MB):", font=("Microsoft YaHei", 10),
                      bg=BG, fg=TEXT, width=10, anchor="w").grid(row=row, column=0, pady=4, sticky="w")
-            # 内存：vm_config.json 存的是 GB（如 "6.000000"），显示为 MB
-            mem_gb = vm.get("memory", vm.get("memory_mb", vm.get("mem_size",
-                         vm.get("ram", inst.get('memory', "4")))))
-            try:
-                mem_mb = int(float(str(mem_gb)) * 1024)
-            except (ValueError, TypeError):
-                mem_mb = 4096
             mem_var = tk.StringVar(value=str(mem_mb))
             tk.Spinbox(form, from_=256, to=16384, increment=256, textvariable=mem_var, width=8,
                        font=("Consolas", 10), bg=BG_LIGHT, fg=TEXT).grid(row=row, column=1, pady=4, sticky="w")
@@ -3140,28 +3169,19 @@ class EmulatorShutdownApp:
 
             # Root
             row = 4
-            root_var = tk.BooleanVar(value=str(vm.get("root", "false")).lower() == "true")
+            root_var = tk.BooleanVar(value=root_val)
             tk.Checkbutton(form, text="Root 权限", variable=root_var,
                            font=("Microsoft YaHei", 10), bg=BG, fg=TEXT,
                            selectcolor=CARD, activebackground=BG
                            ).grid(row=row, column=0, columnspan=2, pady=4, sticky="w")
             fields['root'] = root_var
 
-            # 开机自动启动
-            row = 5
-            autorun_var = tk.BooleanVar(value=str(vm.get("auto_run", "false")).lower() == "true")
-            tk.Checkbutton(form, text="开机自动启动", variable=autorun_var,
-                           font=("Microsoft YaHei", 10), bg=BG, fg=TEXT,
-                           selectcolor=CARD, activebackground=BG
-                           ).grid(row=row, column=0, columnspan=2, pady=4, sticky="w")
-            fields['auto_run'] = autorun_var
-
             # 帧率
             row = 6
             tk.Label(form, text="帧率:", font=("Microsoft YaHei", 10),
                      bg=BG, fg=TEXT, width=10, anchor="w").grid(row=row, column=0, pady=4, sticky="w")
-            fps_var = tk.StringVar(value=str(vm.get("fps", "30")))
-            ttk.Combobox(form, textvariable=fps_var, values=["20", "30", "60", "120"],
+            fps_var = tk.StringVar(value=fps_val)
+            ttk.Combobox(form, textvariable=fps_var, values=["20","30","60","72","120","144","240"],
                          width=8, font=("Consolas", 10), state="readonly").grid(
                 row=row, column=1, pady=4, sticky="w")
             fields['fps'] = fps_var
@@ -3170,7 +3190,7 @@ class EmulatorShutdownApp:
             row = 7
             tk.Label(form, text="设备名:", font=("Microsoft YaHei", 10),
                      bg=BG, fg=TEXT, width=10, anchor="w").grid(row=row, column=0, pady=4, sticky="w")
-            name_var = tk.StringVar(value=str(vm.get("name", inst.get('name', ''))))
+            name_var = tk.StringVar(value=dev_name)
             tk.Entry(form, textvariable=name_var, width=20, font=("Consolas", 10),
                      bg=BG_LIGHT, fg=TEXT, relief="flat").grid(
                 row=row, column=1, pady=4, sticky="w")
@@ -3191,21 +3211,36 @@ class EmulatorShutdownApp:
                     messagebox.showwarning("警告", "实例正在运行，请先关闭再修改")
                     return
                 try:
-                    with open(vm_cfg_path, 'r', encoding='utf-8') as f:
+                    # 保存 vm_config.json（CPU/内存/Root）
+                    with open(vm_path, 'r', encoding='utf-8') as f:
                         cfg = json.load(f)
                     vm_new = cfg.get("vm", {})
                     vm_new["cpu"] = int(fields['cpu'].get())
                     vm_new["memory"] = f"{float(fields['memory'].get()) / 1024:.6f}"
                     vm_new["root"] = "true" if fields['root'].get() else "false"
-                    vm_new["width"] = int(fields['resolution'][0].get())
-                    vm_new["height"] = int(fields['resolution'][1].get())
-                    vm_new["dpi"] = int(fields['dpi'].get())
-                    vm_new["auto_run"] = "true" if fields['auto_run'].get() else "false"
-                    vm_new["fps"] = int(fields['fps'].get())
-                    vm_new["name"] = fields['dev_name'].get()
                     cfg["vm"] = vm_new
-                    with open(vm_cfg_path, 'w', encoding='utf-8') as f:
+                    with open(vm_path, 'w', encoding='utf-8') as f:
                         json.dump(cfg, f, ensure_ascii=False, indent=2)
+                    # 保存 shell_config.json（分辨率/DPI/帧率）
+                    with open(shell_path, 'r', encoding='utf-8') as f:
+                        shell_cfg = json.load(f)
+                    renderer = shell_cfg.get("renderer", {})
+                    res = renderer.get("resolution", {})
+                    res["width"] = f"{float(fields['resolution'][0].get()):.6f}"
+                    res["height"] = f"{float(fields['resolution'][1].get()):.6f}"
+                    res["dpi"] = f"{float(fields['dpi'].get()):.6f}"
+                    renderer["resolution"] = res
+                    renderer["fps_limit"] = fields['fps'].get()
+                    renderer["fps_limit_real"] = fields['fps'].get()
+                    shell_cfg["renderer"] = renderer
+                    with open(shell_path, 'w', encoding='utf-8') as f:
+                        json.dump(shell_cfg, f, ensure_ascii=False, indent=2)
+                    # 保存 extra_config.json（设备名）
+                    with open(extra_path, 'r', encoding='utf-8') as f:
+                        extra_cfg = json.load(f)
+                    extra_cfg["playerName"] = fields['dev_name'].get()
+                    with open(extra_path, 'w', encoding='utf-8') as f:
+                        json.dump(extra_cfg, f, ensure_ascii=False, indent=2)
                     messagebox.showinfo("成功", f"MuMu-{inst['index']} 设置已保存")
                     win.destroy()
                     self._scan_and_display_instances()
