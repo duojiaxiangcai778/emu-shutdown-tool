@@ -1302,6 +1302,22 @@ def _log_error(context, exc_info=None):
     except Exception as _e:
         pass
 
+
+def _log_info(msg):
+    """记录一般信息"""
+    try:
+        if getattr(sys, 'frozen', False):
+            _dir = os.path.dirname(os.path.abspath(sys.executable))
+        else:
+            _dir = os.path.dirname(os.path.abspath(__file__))
+        log_path = os.path.join(_dir, "模拟器管理工具_运行日志.txt")
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(log_path, 'a', encoding='utf-8') as f:
+            f.write(f"[{ts}] {msg}\n")
+    except Exception:
+        pass
+
+
 # 常见 MuMu 安装路径
 MUMU_PATHS_CANDIDATES = [
     r"C:\Program Files\Netease\MuMu\nx_main\MuMuManager.exe",
@@ -1903,7 +1919,7 @@ def launch_mumu_with_health_check(mumu_manager_path, index, max_retries=3, timeo
     current_timeout = timeout
 
     for attempt in range(max_retries + 1):
-        _log_error(f"[MUMU_HEALTH] 实例 {index} 第 {attempt + 1} 次启动尝试 (timeout={current_timeout}s)")
+        _log_info(f"[MUMU_HEALTH] 实例 {index} 第 {attempt + 1} 次启动尝试 (timeout={current_timeout}s)")
 
         last_result = wait_mumu_ready(mumu_manager_path, index, timeout=current_timeout, check_interval=5)
 
@@ -1918,7 +1934,7 @@ def launch_mumu_with_health_check(mumu_manager_path, index, max_retries=3, timeo
             }
 
         # 启动失败，关闭实例再重试
-        _log_error(f"[MUMU_HEALTH] 实例 {index} 启动失败: {last_result['message']}，准备重试")
+        _log_info(f"[MUMU_HEALTH] 实例 {index} 启动失败: {last_result['message']}，准备重试")
         try:
             shutdown_mumu_instance(mumu_manager_path, index)
             time.sleep(3)
@@ -1959,10 +1975,7 @@ def check_all_mumu_instances_health(mumu_manager_path, instances):
             if adb_connected:
                 boot_completed = check_mumu_boot_completed(idx, timeout=5)
 
-        healthy = running == adb_connected == boot_completed
-        # 运行中但 ADB 不通 或 boot 未完成 = 不健康
-        if running and (not adb_connected or not boot_completed):
-            healthy = False
+        healthy = running and adb_connected and boot_completed
 
         results.append({
             "index": idx,
@@ -2156,6 +2169,8 @@ def start_mumu_health_monitor(mumu_manager_path, index, check_interval=1200, shu
                 time.sleep(3)
                 launch_result = launch_mumu_with_health_check(mumu_manager_path, index)
                 if launch_result["success"]:
+                    restart_count = 0
+                    last_restart_time = 0
                     if on_status:
                         on_status(index, True, f"重启成功（第 {launch_result['retries'] + 1} 次尝试）")
                 else:
@@ -2179,6 +2194,8 @@ def start_mumu_health_monitor(mumu_manager_path, index, check_interval=1200, shu
                 time.sleep(3)
                 launch_result = launch_mumu_with_health_check(mumu_manager_path, index)
                 if launch_result["success"]:
+                    restart_count = 0
+                    last_restart_time = 0
                     if on_status:
                         on_status(index, True, f"重启成功（第 {launch_result['retries'] + 1} 次尝试）")
                 else:
@@ -2283,22 +2300,33 @@ def _click_mumu_restart(dialog_hwnd):
             buf = ctypes.create_unicode_buffer(clen + 1)
             user32.GetWindowTextW(child, buf, clen + 1)
             if "重启" in buf.value:
-                user32.PostMessageW(child, BM_CLICK, 0, 0)
+                user32.SendMessageW(child, BM_CLICK, 0, 0)
                 return True
     return False
 
 
+_auto_click_restart_count = 0
+_AUTO_CLICK_RESTART_MAX = 10
+
+
 def auto_restart_mumu_on_error():
     """扫描 MuMu 错误弹窗，发现后自动点击重启。
+    每个会话最多点击 _AUTO_CLICK_RESTART_MAX 次，防止无限循环。
     返回已处理的弹窗数。
     """
+    global _auto_click_restart_count
+    if _auto_click_restart_count >= _AUTO_CLICK_RESTART_MAX:
+        return 0
     dialogs = _find_mumu_error_dialog()
     if not dialogs:
         return 0
     count = 0
     for hwnd, _ in dialogs:
+        if _auto_click_restart_count >= _AUTO_CLICK_RESTART_MAX:
+            break
         if _click_mumu_restart(hwnd):
             count += 1
+            _auto_click_restart_count += 1
     return count
 
 
