@@ -2148,8 +2148,6 @@ def start_mumu_health_monitor(mumu_manager_path, index, check_interval=1200, shu
 
             # 自动点击 MuMu 错误弹窗的「重启」按钮
             auto_restart_mumu_on_error()
-            # 自动点击 Android 内部「运行终止」弹窗
-            adb_detect_and_restart(index)
 
             # 执行健康检查
             adb_ok = check_mumu_adb_connection(index, timeout=10)
@@ -2330,6 +2328,7 @@ def auto_restart_mumu_on_error():
     return count
 
 
+# deprecated: Windows 层弹窗经 EnumWindows 已覆盖，ADB uiautomator 对此场景无效
 def adb_tap_restart_button(adb_port):
     """通过 ADB uiautomator 在 Android 界面查找并点击「立即重启」按钮。
     返回 True 表示已点击，False 表示没找到按钮。
