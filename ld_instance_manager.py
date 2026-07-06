@@ -403,44 +403,58 @@ def check_running_instances(instances, dnconsole_path=None):
     running_names = set()
 
     if dnconsole_path and os.path.isfile(dnconsole_path):
-        try:
-            # 方式1: 使用 dnconsole.exe list2
+        import concurrent.futures as _cf
+
+        def _try_list2():
             r = subprocess.run(
                 [dnconsole_path, 'list2'],
                 capture_output=True, text=True, timeout=10,
                 creationflags=subprocess.CREATE_NO_WINDOW
             )
             if r.returncode == 0 and r.stdout.strip():
+                names = set()
                 for line in r.stdout.strip().splitlines():
                     parts = line.split(',')
                     if len(parts) >= 6:
                         name = parts[1].strip()
-                        # 第6列(索引5)表示运行状态: 1=运行中
                         status = parts[5].strip()
                         if status == '1' and name.startswith('leidian'):
-                            running_names.add(name)
-                if running_names:
-                    for inst in instances:
-                        inst['running'] = inst['name'] in running_names
-                    return
+                            names.add(name)
+                return names
+            return None
 
-            # 方式2: 使用 dnconsole.exe runninglist
-            r2 = subprocess.run(
+        def _try_runninglist():
+            r = subprocess.run(
                 [dnconsole_path, 'runninglist'],
                 capture_output=True, text=True, timeout=10,
                 creationflags=subprocess.CREATE_NO_WINDOW
             )
-            if r2.returncode == 0 and r2.stdout.strip():
-                for line in r2.stdout.strip().splitlines():
+            if r.returncode == 0 and r.stdout.strip():
+                names = set()
+                for line in r.stdout.strip().splitlines():
                     line = line.strip()
                     if line.startswith('leidian'):
-                        running_names.add(line)
-                if running_names:
-                    for inst in instances:
-                        inst['running'] = inst['name'] in running_names
-                    return
-        except Exception as _e:
-            pass
+                        names.add(line)
+                return names
+            return None
+
+        # 并行尝试 list2 和 runninglist，谁先返回有效数据用谁
+        with _cf.ThreadPoolExecutor(max_workers=2) as pool:
+            f1 = pool.submit(_try_list2)
+            f2 = pool.submit(_try_runninglist)
+            for f in _cf.as_completed([f1, f2], timeout=12):
+                try:
+                    result = f.result()
+                    if result:
+                        running_names = result
+                        break
+                except Exception:
+                    continue
+
+        if running_names:
+            for inst in instances:
+                inst['running'] = inst['name'] in running_names
+            return
 
     # 回退方式: wmic 通过命令行检测
     try:
