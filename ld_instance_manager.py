@@ -2202,6 +2202,8 @@ def start_mumu_health_monitor(mumu_manager_path, index, check_interval=1200, shu
                 continue
 
             # 健康
+            restart_count = 0
+            last_restart_time = 0
             if on_status:
                 on_status(index, True, "巡检正常")
 
