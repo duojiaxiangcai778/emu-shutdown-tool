@@ -1774,6 +1774,7 @@ class EmulatorShutdownApp:
             while t["running"]:
                 rem = int(t["target_ts"] - time.time())
                 if rem <= 0:
+                    _log_info(f"计时器到期: id={t.get('id')} type={t.get('type')}")
                     self.root.after(0, lambda: time_up_fn(t)); break
                 t["remaining"] = rem
                 if not t.get("_pending_update"):
@@ -2097,61 +2098,78 @@ class EmulatorShutdownApp:
 
         def _time_up(t):
             if not t["running"]:
+                _log_info(f"_time_up 跳过: id={t.get('id')} running=False")
                 return
+            _log_info(f"定时执行(启动): id={t.get('id')} 实例数={len(t.get('instances',[]))}")
             t["running"] = False
             t["_executing"] = True
             t["vars"]["act_btn"].set_text("…")
             t["vars"]["st_lbl"].config(text="启动中...", fg=YELLOW)
             self._save_tasks_config()
 
+            # 尝试从配置文件回退 dnconsole 路径
             dnconsole = self._ld_paths.get("dnconsole")
             if not dnconsole or not os.path.isfile(dnconsole):
-                t["vars"]["st_lbl"].config(text="未找到 dnconsole", fg=RED)
-                t["_executing"] = False
-                return
+                _log_info(f"_time_up: 当前 dnconsole 不可用({dnconsole}), 尝试回退...")
+                cfg = load_tool_config()
+                dnconsole = cfg.get("paths", {}).get("dnconsole", "")
+                if dnconsole and os.path.isfile(dnconsole):
+                    self._ld_paths["dnconsole"] = dnconsole
+                    _log_info(f"_time_up: 回退成功 dnconsole={dnconsole}")
+                else:
+                    _log_error(f"_time_up: dnconsole 不可用 self._ld_paths={dict(self._ld_paths)}")
+                    t["vars"]["st_lbl"].config(text="未找到 dnconsole", fg=RED)
+                    t["_executing"] = False
+                    return
 
             instances = t["instances"][:]
             if not instances:
+                _log_error(f"_time_up: 无实例 task instances={t.get('instances')}")
                 t["vars"]["st_lbl"].config(text="无实例可选", fg=TEXT_LIGHT)
                 t["_executing"] = False
                 return
 
             def _work():
-                ld_names = [n for n in instances if not n.startswith("mumu_")]
-                mumu_keys = [n for n in instances if n.startswith("mumu_")]
-                total = len(instances)
-                ok = 0
+                try:
+                    ld_names = [n for n in instances if not n.startswith("mumu_")]
+                    mumu_keys = [n for n in instances if n.startswith("mumu_")]
+                    total = len(instances)
+                    ok = 0
 
-                # LDPlayer
-                if ld_names:
-                    results = staggered_launch(
-                        dnconsole, ld_names, interval_seconds=5,
-                        on_status=lambda s: self.root.after(0, lambda: t["vars"]["st_lbl"].config(text=s[:30], fg=YELLOW)),
-                    )
-                    ok += sum(1 for _, s, _ in results if s)
+                    # LDPlayer
+                    if ld_names:
+                        results = staggered_launch(
+                            dnconsole, ld_names, interval_seconds=5,
+                            on_status=lambda s: self.root.after(0, lambda: t["vars"]["st_lbl"].config(text=s[:30], fg=YELLOW)),
+                        )
+                        ok += sum(1 for _, s, _ in results if s)
 
-                # MuMu
-                if mumu_keys and self._mumu_path:
-                    from ld_instance_manager import launch_mumu_instance
-                    for k in mumu_keys:
-                        idx = int(k.replace("mumu_", ""))
-                        try:
-                            succ_mu, _ = launch_mumu_instance(self._mumu_path, idx)
-                            if succ_mu:
-                                ok += 1
-                            time.sleep(3)
-                        except Exception:
-                            pass
+                    # MuMu
+                    if mumu_keys and self._mumu_path:
+                        from ld_instance_manager import launch_mumu_instance
+                        for k in mumu_keys:
+                            idx = int(k.replace("mumu_", ""))
+                            try:
+                                succ_mu, _ = launch_mumu_instance(self._mumu_path, idx)
+                                if succ_mu:
+                                    ok += 1
+                                time.sleep(3)
+                            except Exception as _e_mu:
+                                _log_error(f"_time_up _work: MuMu {idx} 启动失败: {_e_mu}")
 
-                def _ui():
-                    t["_executing"] = False
-                    t["vars"]["st_lbl"].config(
-                        text=f"完成 {ok}/{total}", fg=GREEN if ok == total else YELLOW)
-                    self._scan_and_display_instances()
-                    if t["mode"] == "fixed":
-                        t["auto_reset_id"] = self.root.after(2000, lambda: self._autoreset_launch(t))
-                    self._save_tasks_config()
-                self.root.after(0, _ui)
+                    def _ui():
+                        t["_executing"] = False
+                        t["vars"]["st_lbl"].config(
+                            text=f"完成 {ok}/{total}", fg=GREEN if ok == total else YELLOW)
+                        self._scan_and_display_instances()
+                        if t["mode"] == "fixed":
+                            t["auto_reset_id"] = self.root.after(2000, lambda: self._autoreset_launch(t))
+                        self._save_tasks_config()
+                    self.root.after(0, _ui)
+                except Exception as _e_w:
+                    _log_error(f"_time_up _work 异常: {_e_w}")
+                    self.root.after(0, lambda: t["vars"]["st_lbl"].config(text="启动异常", fg=RED))
+                    self.root.after(0, lambda: t.__setitem__("_executing", False))
 
             threading.Thread(target=_work, daemon=True).start()
 
