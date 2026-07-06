@@ -2596,9 +2596,9 @@ class EmulatorShutdownApp:
             self.mumu_path_var.set(mumu_path)
             self.mumu_path_entry.config(fg=TEXT)
 
-        # 路径完整则直接扫描实例，否则在后台搜索
+        # 路径完整则延迟扫描（窗口先显示，实例列表后加载，秒开不卡主线程）
         if has_ld and has_mumu:
-            self._scan_and_display_instances()
+            self.root.after(50, self._scan_and_display_instances)
         else:
             def _work():
                 try:
