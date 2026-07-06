@@ -700,6 +700,7 @@ def launch_instance(dnconsole_path, instance_name, timeout=30):
     返回: (成功, 消息)
     """
     if not os.path.isfile(dnconsole_path):
+        _log_error("[LAUNCH]", f"dnconsole 不存在: {dnconsole_path}")
         return False, f"dnconsole.exe 不存在: {dnconsole_path}"
 
     # 从实例名中提取索引
@@ -711,6 +712,7 @@ def launch_instance(dnconsole_path, instance_name, timeout=30):
         params = f'launch --name {instance_name}'
         launch_args = ['launch', '--name', instance_name]
 
+    _log_error("[LAUNCH]", f"启动 {instance_name} (index={index})")
     directory = os.path.dirname(dnconsole_path)
     err_code = 0
 
@@ -736,35 +738,46 @@ def launch_instance(dnconsole_path, instance_name, timeout=30):
                     # 没有索引时按实例名匹配第2列
                     if parts[1].strip() != instance_name:
                         continue
-                return parts[5].strip() == '1'
+                running = parts[5].strip() == '1'
+                _log_error("[LAUNCH]", f"_check_running: {instance_name} running={running}")
+                return running
+            _log_error("[LAUNCH]", f"_check_running: {instance_name} 未在 list2 中找到")
             return False
-        except Exception:
+        except Exception as e:
+            _log_error("[LAUNCH]", f"_check_running 异常: {e}")
             return False
 
     # 尝试方式1: subprocess.run（免UAC，适合无人值守定时启动）
     try:
+        _log_error("[LAUNCH]", f"方式1: subprocess.run {instance_name}")
         r = subprocess.run(
             [dnconsole_path] + launch_args,
             capture_output=True, text=True, timeout=timeout,
             creationflags=subprocess.CREATE_NO_WINDOW
         )
+        _log_error("[LAUNCH]", f"subprocess returncode={r.returncode}")
         if r.returncode == 0:
             time.sleep(3)
             if _check_running():
+                _log_error("[LAUNCH]", f"{instance_name} 启动成功（方式1）")
                 return True, f"{instance_name} 启动成功"
             else:
                 # 进程未启动，等待再等几秒
                 time.sleep(5)
                 if _check_running():
+                    _log_error("[LAUNCH]", f"{instance_name} 启动成功（方式1+延迟）")
                     return True, f"{instance_name} 启动成功（延迟）"
+                _log_error("[LAUNCH]", f"{instance_name} 启动失败：dnconsole 返回0但进程未运行")
                 return False, f"{instance_name} 启动失败：dnconsole 返回成功但进程未运行"
         raw = (r.stdout.strip() or r.stderr.strip() or "")
+        _log_error("[LAUNCH]", f"subprocess 返回非0: {raw[:100]}")
         if "Usage:" in raw or "Commands :" in raw or "dnconsole <command>" in raw.lower():
             return False, f"启动失败，参数错误（实例: {instance_name}）"
-    except Exception:
-        pass
+    except Exception as e:
+        _log_error("[LAUNCH]", f"方式1 异常: {e}")
 
     # 尝试方式2: ShellExecuteW (runas 提权，可能弹UAC)
+    _log_error("[LAUNCH]", f"方式2: ShellExecuteW {instance_name}")
     try:
         shell32 = ctypes.windll.shell32
         shell32.ShellExecuteW.argtypes = [
@@ -776,19 +789,24 @@ def launch_instance(dnconsole_path, instance_name, timeout=30):
             None, "runas", dnconsole_path, params, directory, 0
         )
         h_val = h_instance.value if h_instance else 0
+        _log_error("[LAUNCH]", f"ShellExecuteW 返回值={h_val}")
         if h_val and h_val > 32:
             time.sleep(3)
             if _check_running():
+                _log_error("[LAUNCH]", f"{instance_name} 启动成功（方式2）")
                 return True, f"{instance_name} 启动成功（提权）"
             time.sleep(5)
             if _check_running():
+                _log_error("[LAUNCH]", f"{instance_name} 启动成功（方式2+延迟）")
                 return True, f"{instance_name} 启动成功（提权+延迟）"
+            _log_error("[LAUNCH]", f"{instance_name} 启动失败：ShellExecuteW >32 但进程未运行")
             return False, f"{instance_name} 启动失败：ShellExecuteW 成功但进程未运行"
         err_code = h_val or 0
     except Exception as e:
-        # ShellExecuteW 抛异常，直接返回错误（subprocess 已在方式1试过）
+        _log_error("[LAUNCH]", f"方式2 异常: {e}")
         return False, f"{instance_name} 启动失败: {e}"
 
+    _log_error("[LAUNCH]", f"{instance_name} 全部方式失败 (err={err_code})")
     return False, f"{instance_name} 失败 (err={err_code})"
 
 

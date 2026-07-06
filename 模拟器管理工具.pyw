@@ -107,6 +107,16 @@ def _log_info(msg):
         pass
 
 
+def _log_warn(msg):
+    """记录警告信息（不致命但需关注）"""
+    try:
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with _LOG_BUFFER_LOCK:
+            _LOG_BUFFER.append(f"[{ts}] ⚠ {msg}\n")
+    except Exception:
+        pass
+
+
 def _flush_log():
     """将缓冲写入日志文件（追加模式），自动控制日志文件大小"""
     with _LOG_BUFFER_LOCK:
