@@ -2117,15 +2117,36 @@ class EmulatorShutdownApp:
                 return
 
             def _work():
-                results = staggered_launch(
-                    dnconsole, instances, interval_seconds=5,
-                    on_status=lambda s: self.root.after(0, lambda: t["vars"]["st_lbl"].config(text=s[:30], fg=YELLOW)),
-                )
-                ok = sum(1 for _, s, _ in results if s)
+                ld_names = [n for n in instances if not n.startswith("mumu_")]
+                mumu_keys = [n for n in instances if n.startswith("mumu_")]
+                total = len(instances)
+                ok = 0
+
+                # LDPlayer
+                if ld_names:
+                    results = staggered_launch(
+                        dnconsole, ld_names, interval_seconds=5,
+                        on_status=lambda s: self.root.after(0, lambda: t["vars"]["st_lbl"].config(text=s[:30], fg=YELLOW)),
+                    )
+                    ok += sum(1 for _, s, _ in results if s)
+
+                # MuMu
+                if mumu_keys and self._mumu_path:
+                    from ld_instance_manager import launch_mumu_instance
+                    for k in mumu_keys:
+                        idx = int(k.replace("mumu_", ""))
+                        try:
+                            succ_mu, _ = launch_mumu_instance(self._mumu_path, idx)
+                            if succ_mu:
+                                ok += 1
+                            time.sleep(3)
+                        except Exception:
+                            pass
+
                 def _ui():
                     t["_executing"] = False
                     t["vars"]["st_lbl"].config(
-                        text=f"完成 {ok}/{len(results)}", fg=GREEN if ok == len(results) else YELLOW)
+                        text=f"完成 {ok}/{total}", fg=GREEN if ok == total else YELLOW)
                     self._scan_and_display_instances()
                     if t["mode"] == "fixed":
                         t["auto_reset_id"] = self.root.after(2000, lambda: self._autoreset_launch(t))
@@ -2323,20 +2344,42 @@ class EmulatorShutdownApp:
         self._auto_reset_task(t, GREEN, YELLOW)
 
     def _exec_test_launch(self, instances):
-        """5s测试启动：直接启动选中的实例"""
+        """5s测试启动：直接启动选中的实例（LDPlayer + MuMu）"""
         import threading as _th
         def _work():
             try:
-                from ld_instance_manager import staggered_launch
-                dnconsole = self._ld_paths.get("dnconsole")
-                if not dnconsole or not os.path.isfile(dnconsole):
-                    self.root.after(0, lambda: self._toast("测试-启动", "未找到 dnconsole", 4000))
-                    return
-                results = staggered_launch(dnconsole, instances, interval_seconds=5)
-                succ = sum(1 for _, ok, _ in results if ok)
-                fail = len(results) - succ
+                ld_names = [n for n in instances if not n.startswith("mumu_")]
+                mumu_keys = [n for n in instances if n.startswith("mumu_")]
+                total = len(instances)
+                succ = 0
+
+                # LDPlayer
+                if ld_names:
+                    from ld_instance_manager import staggered_launch
+                    dnconsole = self._ld_paths.get("dnconsole")
+                    if dnconsole and os.path.isfile(dnconsole):
+                        results = staggered_launch(dnconsole, ld_names, interval_seconds=5)
+                        succ += sum(1 for _, ok, _ in results if ok)
+                    else:
+                        for _ in ld_names:
+                            _log_error(f"测试启动: dnconsole 不可用，跳过 LDPlayer 实例")
+
+                # MuMu
+                if mumu_keys and self._mumu_path:
+                    from ld_instance_manager import launch_mumu_instance
+                    for k in mumu_keys:
+                        idx = k.replace("mumu_", "")
+                        try:
+                            ok, msg = launch_mumu_instance(self._mumu_path, int(idx))
+                            if ok:
+                                succ += 1
+                            time.sleep(3)
+                        except Exception as e:
+                            _log_error(f"测试启动 MuMu {idx}: {e}")
+
+                fail = total - succ
                 self.root.after(0, lambda: self._toast(
-                    "测试完成", f"启动: {succ}/{len(results)} 个实例" + (f" 失败{fail}" if fail else ""), 5000))
+                    "测试完成", f"启动: {succ}/{total} 个实例" + (f" 失败{fail}" if fail else ""), 5000))
             except Exception as e:
                 _log_error(f"测试启动异常: {e}")
                 self.root.after(0, lambda: self._toast("测试失败", str(e)[:60], 5000))
