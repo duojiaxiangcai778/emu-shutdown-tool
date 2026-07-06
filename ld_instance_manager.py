@@ -694,8 +694,9 @@ def _extract_index(instance_name):
 
 def launch_instance(dnconsole_path, instance_name, timeout=30):
     """
-    启动单个实例（ShellExecuteW 提权方式）
-    注意: LDPlayer 9.5.13.0 中 launch --name 参数无效，必须使用 --index
+    启动单个实例。
+    优先用 subprocess.run 免 UAC，ShellExecuteW(runas) 仅做提权回退。
+    启动后校验进程是否真正运行。
     返回: (成功, 消息)
     """
     if not os.path.isfile(dnconsole_path):
@@ -707,57 +708,77 @@ def launch_instance(dnconsole_path, instance_name, timeout=30):
         params = f'launch --index {index}'
         launch_args = ['launch', '--index', str(index)]
     else:
-        # 如果提取失败（实例名不规范），回退到 --name 方式
         params = f'launch --name {instance_name}'
         launch_args = ['launch', '--name', instance_name]
-
-    shell32 = ctypes.windll.shell32
-    # 明确声明 argtypes 确保 64 位 Python 正确传参
-    shell32.ShellExecuteW.argtypes = [
-        ctypes.c_void_p,   # HWND hwnd
-        ctypes.c_wchar_p,  # LPCWSTR lpOperation
-        ctypes.c_wchar_p,  # LPCWSTR lpFile
-        ctypes.c_wchar_p,  # LPCWSTR lpParameters
-        ctypes.c_wchar_p,  # LPCWSTR lpDirectory
-        ctypes.c_int,      # INT nShowCmd
-    ]
-    shell32.ShellExecuteW.restype = ctypes.c_void_p
 
     directory = os.path.dirname(dnconsole_path)
     err_code = 0
 
-    # 尝试方式1: ShellExecuteW (runas 提权)
+    def _check_running():
+        """启动后校验：调用 dnconsole list2 看实例是否在运行"""
+        try:
+            r = subprocess.run(
+                [dnconsole_path, 'list2'],
+                capture_output=True, text=True, timeout=8,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+            # list2 输出格式: 每行 "index,title,running"
+            for line in r.stdout.strip().split('\n'):
+                if not line.strip():
+                    continue
+                parts = line.split(',')
+                if len(parts) >= 3 and parts[0].strip() == str(index):
+                    return parts[2].strip() == '1'
+            return False
+        except Exception:
+            return False
+
+    # 尝试方式1: subprocess.run（免UAC，适合无人值守定时启动）
     try:
-        h_instance = shell32.ShellExecuteW(
-            None, "runas", dnconsole_path, params, directory, 0  # SW_HIDE
+        r = subprocess.run(
+            [dnconsole_path] + launch_args,
+            capture_output=True, text=True, timeout=timeout,
+            creationflags=subprocess.CREATE_NO_WINDOW
         )
-        # 返回值 > 32 表示成功 (HINSTANCE 是指针大小，直接用 .value 避免 64 位截断)
+        if r.returncode == 0:
+            time.sleep(3)
+            if _check_running():
+                return True, f"{instance_name} 启动成功"
+            else:
+                # 进程未启动，等待再等几秒
+                time.sleep(5)
+                if _check_running():
+                    return True, f"{instance_name} 启动成功（延迟）"
+                return False, f"{instance_name} 启动失败：dnconsole 返回成功但进程未运行"
+        raw = (r.stdout.strip() or r.stderr.strip() or "")
+        if "Usage:" in raw or "Commands :" in raw or "dnconsole <command>" in raw.lower():
+            return False, f"启动失败，参数错误（实例: {instance_name}）"
+    except Exception:
+        pass
+
+    # 尝试方式2: ShellExecuteW (runas 提权，可能弹UAC)
+    try:
+        shell32 = ctypes.windll.shell32
+        shell32.ShellExecuteW.argtypes = [
+            ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_wchar_p,
+            ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_int,
+        ]
+        shell32.ShellExecuteW.restype = ctypes.c_void_p
+        h_instance = shell32.ShellExecuteW(
+            None, "runas", dnconsole_path, params, directory, 0
+        )
         h_val = h_instance.value if h_instance else 0
         if h_val and h_val > 32:
             time.sleep(3)
-            return True, f"{instance_name} 启动成功"
+            if _check_running():
+                return True, f"{instance_name} 启动成功（提权）"
+            time.sleep(5)
+            if _check_running():
+                return True, f"{instance_name} 启动成功（提权+延迟）"
+            return False, f"{instance_name} 启动失败：ShellExecuteW 成功但进程未运行"
         err_code = h_val or 0
-        # 尝试方式2: subprocess.run (对已提权的程序有效)
-        try:
-            r = subprocess.run(
-                [dnconsole_path] + launch_args,
-                capture_output=True, text=True, timeout=timeout,
-                creationflags=subprocess.CREATE_NO_WINDOW
-            )
-            if r.returncode == 0:
-                time.sleep(3)
-                return True, f"{instance_name} 启动成功"
-            raw = (r.stdout.strip() or r.stderr.strip() or "")
-            # 如果输出包含帮助文本（启动参数错误），给出友好提示
-            if "Usage:" in raw or "Commands :" in raw or "dnconsole <command>" in raw.lower():
-                msg = f"启动失败，dnconsole 返回帮助信息（--index 参数可能不被支持，实例: {instance_name}）"
-            else:
-                msg = raw or f"ShellExecuteW返回{err_code}"
-        except Exception:
-            msg = f"启动失败 (err={err_code})"
-        return False, f"{instance_name} 失败: {msg}"
     except Exception as e:
-        # 最终回退: subprocess.run
+        # 最终回退: subprocess.run（不带runas）
         try:
             r = subprocess.run(
                 [dnconsole_path] + launch_args,
@@ -766,18 +787,18 @@ def launch_instance(dnconsole_path, instance_name, timeout=30):
             )
             if r.returncode == 0:
                 time.sleep(3)
-                return True, f"{instance_name} 启动成功"
+                if _check_running():
+                    return True, f"{instance_name} 启动成功"
+                time.sleep(5)
+                if _check_running():
+                    return True, f"{instance_name} 启动成功（延迟）"
+                return False, f"{instance_name} 启动失败：返回0但进程未运行"
             raw2 = (r.stdout.strip() or r.stderr.strip() or str(e))
-            # 同上，过滤帮助文本
-            if "Usage:" in raw2 or "Commands :" in raw2 or "dnconsole <command>" in raw2.lower():
-                msg = f"启动失败，dnconsole 返回帮助信息（--index 参数可能不被支持，实例: {instance_name}）"
-            else:
-                msg = raw2
-        except subprocess.TimeoutExpired:
-            msg = f"启动超时 ({timeout}s)"
         except Exception as e2:
-            msg = str(e2)
-        return False, f"{instance_name} 失败: {msg}"
+            raw2 = str(e2)
+        return False, f"{instance_name} 失败: {raw2}"
+
+    return False, f"{instance_name} 失败 (err={err_code})"
 
 
 def staggered_launch(dnconsole_path, instance_names, interval_seconds=5,

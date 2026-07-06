@@ -1801,6 +1801,7 @@ class EmulatorShutdownApp:
     def _stop_task(self, t, color):
         """停止任务（通用逻辑）"""
         t["running"] = False
+        t["_executing"] = False
         for k in ("update_id", "auto_reset_id"):
             if t.get(k):
                 try: self.root.after_cancel(t[k])
@@ -1954,7 +1955,8 @@ class EmulatorShutdownApp:
                 return
             _log_info(f"定时执行: id={t.get('id')} 类型={t.get('type')}")
             t["running"] = False
-            t["vars"]["act_btn"].config_bg(color); t["vars"]["act_btn"].set_text("▶")
+            t["_executing"] = True
+            t["vars"]["act_btn"].set_text("…")
             t["vars"]["st_lbl"].config(text="执行中...", fg=YELLOW)
             self._save_tasks_config()
             should_shutdown = self.shutdown_var.get()
@@ -1962,6 +1964,7 @@ class EmulatorShutdownApp:
             def _on_done(count, success, fail_count, failed_names, _, shutdown_executed):
                 _log_info(f"定时执行完成: id={t.get('id')} count={count} success={success} shutdown_executed={shutdown_executed}")
                 def _ui():
+                    t["_executing"] = False
                     t["vars"]["st_lbl"].config(
                         text=f"完成 {success}/{count}" if count > 0 else "无进程",
                         fg=GREEN if fail_count == 0 else YELLOW)
@@ -1981,6 +1984,8 @@ class EmulatorShutdownApp:
         task["_update_fn"] = _update_status
 
         def _toggle():
+            if task.get("_executing"):
+                return
             _stop() if task["running"] else _start()
 
         def _start():
@@ -2094,7 +2099,8 @@ class EmulatorShutdownApp:
             if not t["running"]:
                 return
             t["running"] = False
-            t["vars"]["act_btn"].config_bg(color); t["vars"]["act_btn"].set_text("▶")
+            t["_executing"] = True
+            t["vars"]["act_btn"].set_text("…")
             t["vars"]["st_lbl"].config(text="启动中...", fg=YELLOW)
             self._save_tasks_config()
 
@@ -2115,6 +2121,7 @@ class EmulatorShutdownApp:
                 )
                 ok = sum(1 for _, s, _ in results if s)
                 def _ui():
+                    t["_executing"] = False
                     t["vars"]["st_lbl"].config(
                         text=f"完成 {ok}/{len(results)}", fg=GREEN if ok == len(results) else YELLOW)
                     self._scan_and_display_instances()
@@ -2130,6 +2137,8 @@ class EmulatorShutdownApp:
         task["_update_fn"] = _update_status
 
         def _toggle():
+            if task.get("_executing"):
+                return
             _stop() if task["running"] else _start()
 
         def _start():
@@ -2315,16 +2324,20 @@ class EmulatorShutdownApp:
         """5s测试启动：直接启动选中的实例"""
         import threading as _th
         def _work():
-            from ld_instance_manager import staggered_launch
-            dnconsole = self._ld_paths.get("dnconsole")
-            if not dnconsole or not os.path.isfile(dnconsole):
-                self.root.after(0, lambda: self._toast("测试-启动", "未找到 dnconsole", 4000))
-                return
-            result = staggered_launch(dnconsole, instances, interval_seconds=5)
-            succ = sum(1 for r in result.values() if r.get("success"))
-            fail = len(result) - succ
-            self.root.after(0, lambda: self._toast(
-                "测试完成", f"启动: {succ}/{len(result)} 个实例" + (f" 失败{fail}" if fail else ""), 5000))
+            try:
+                from ld_instance_manager import staggered_launch
+                dnconsole = self._ld_paths.get("dnconsole")
+                if not dnconsole or not os.path.isfile(dnconsole):
+                    self.root.after(0, lambda: self._toast("测试-启动", "未找到 dnconsole", 4000))
+                    return
+                results = staggered_launch(dnconsole, instances, interval_seconds=5)
+                succ = sum(1 for _, ok, _ in results if ok)
+                fail = len(results) - succ
+                self.root.after(0, lambda: self._toast(
+                    "测试完成", f"启动: {succ}/{len(results)} 个实例" + (f" 失败{fail}" if fail else ""), 5000))
+            except Exception as e:
+                _log_error(f"测试启动异常: {e}")
+                self.root.after(0, lambda: self._toast("测试失败", str(e)[:60], 5000))
         _th.Thread(target=_work, daemon=True).start()
 
     def _stop_all_launch(self):
