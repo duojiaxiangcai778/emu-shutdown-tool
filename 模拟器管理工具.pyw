@@ -2390,7 +2390,7 @@ class EmulatorShutdownApp:
                         succ += sum(1 for _, ok, _ in results if ok)
                     else:
                         for _ in ld_names:
-                            _log_error(f"测试启动: dnconsole 不可用，跳过 LDPlayer 实例")
+                            _log_error("测试启动: dnconsole 不可用，跳过 LDPlayer 实例")
 
                 # MuMu
                 if mumu_keys and self._mumu_path:
@@ -2410,7 +2410,7 @@ class EmulatorShutdownApp:
                     "测试完成", f"启动: {succ}/{total} 个实例" + (f" 失败{fail}" if fail else ""), 5000))
             except Exception as e:
                 _log_error(f"测试启动异常: {e}")
-                self.root.after(0, lambda: self._toast("测试失败", str(e)[:60], 5000))
+                self.root.after(0, lambda e=e: self._toast("测试失败", str(e)[:60], 5000))
         _th.Thread(target=_work, daemon=True).start()
 
     def _stop_all_launch(self):

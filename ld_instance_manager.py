@@ -449,7 +449,7 @@ def check_running_instances(instances, dnconsole_path=None):
                         running_names = result
                         break
                 except Exception:
-                    continue
+                    continue  # noqa: S112 一个失败继续等另一个
 
         if running_names:
             for inst in instances:
