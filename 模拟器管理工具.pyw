@@ -1244,11 +1244,13 @@ class EmulatorShutdownApp:
         _log_info(f"配置加载完成：关闭任务 {len(self.shutdown_tasks)} 个，启动任务 {len(self.launch_tasks)} 个，健康检测={'开' if self._mumu_health_check_enabled else '关'}")
         # 先初始化实例管理器（加载路径），再启动扫描
         self._init_instance_manager()
-        # 开机自动恢复最新快照
-        try:
-            from ld_instance_manager import list_snapshots, restore_snapshot
-            snaps = list_snapshots(SNAPSHOT_DIR)
-            if snaps:
+        # 开机自动恢复最新快照（后台线程，不阻塞主线程）
+        def _bg_restore():
+            try:
+                from ld_instance_manager import list_snapshots, restore_snapshot
+                snaps = list_snapshots(SNAPSHOT_DIR)
+                if not snaps:
+                    return
                 latest = snaps[0]
                 _log_info(f"发现 {len(snaps)} 个快照，自动恢复最新: {latest['timestamp']}")
                 vms = self._ld_paths.get("vms_config_dir")
@@ -1262,7 +1264,6 @@ class EmulatorShutdownApp:
                             vms = _saved.get("paths", {}).get("vms_config_dir")
                         if not mp:
                             mp = _saved.get("paths", {}).get("multiplayer_path")
-                # 最后手段：自动搜索
                 if not vms or not mp:
                     from ld_instance_manager import auto_detect_paths
                     detected = auto_detect_paths()
@@ -1271,14 +1272,13 @@ class EmulatorShutdownApp:
                     if not mp and detected.get("multiplayer_path"):
                         mp = detected["multiplayer_path"]
                 mp_cfg = os.path.join(mp, "vms", "config") if mp and os.path.isdir(os.path.join(mp, "vms", "config")) else None
-                # restore_snapshot 返回 (成功数, 消息)
                 count, msg = restore_snapshot(latest["path"], vms, mp_cfg, mumu_vms_dir=self._get_mumu_vms_dir())
                 if count > 0:
                     _log_info(f"快照恢复成功: {msg}")
-                    # 快照恢复后重新扫描实例列表
-                    self.root.after(500, self._scan_and_display_instances)
-        except Exception as e:
-            _log_error(f"开机自动恢复快照失败: {e}")
+                    self.root.after(0, self._scan_and_display_instances)
+            except Exception as e:
+                _log_error(f"开机自动恢复快照失败: {e}")
+        threading.Thread(target=_bg_restore, daemon=True).start()
         self._start_scan_loop()
         # 启动右侧日志面板刷新（每秒）
         self.root.after(5000, self._refresh_log_display)
