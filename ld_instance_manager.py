@@ -722,13 +722,21 @@ def launch_instance(dnconsole_path, instance_name, timeout=30):
                 capture_output=True, text=True, timeout=8,
                 creationflags=subprocess.CREATE_NO_WINDOW
             )
-            # list2 输出格式: 每行 "index,title,running"
+            # list2 输出格式：index,name,title,...,status(第6列=1运行中)
             for line in r.stdout.strip().split('\n'):
                 if not line.strip():
                     continue
                 parts = line.split(',')
-                if len(parts) >= 3 and parts[0].strip() == str(index):
-                    return parts[2].strip() == '1'
+                if len(parts) < 6:
+                    continue
+                if index is not None:
+                    if parts[0].strip() != str(index):
+                        continue
+                else:
+                    # 没有索引时按实例名匹配第2列
+                    if parts[1].strip() != instance_name:
+                        continue
+                return parts[5].strip() == '1'
             return False
         except Exception:
             return False
@@ -778,25 +786,8 @@ def launch_instance(dnconsole_path, instance_name, timeout=30):
             return False, f"{instance_name} 启动失败：ShellExecuteW 成功但进程未运行"
         err_code = h_val or 0
     except Exception as e:
-        # 最终回退: subprocess.run（不带runas）
-        try:
-            r = subprocess.run(
-                [dnconsole_path] + launch_args,
-                capture_output=True, text=True, timeout=timeout,
-                creationflags=subprocess.CREATE_NO_WINDOW
-            )
-            if r.returncode == 0:
-                time.sleep(3)
-                if _check_running():
-                    return True, f"{instance_name} 启动成功"
-                time.sleep(5)
-                if _check_running():
-                    return True, f"{instance_name} 启动成功（延迟）"
-                return False, f"{instance_name} 启动失败：返回0但进程未运行"
-            raw2 = (r.stdout.strip() or r.stderr.strip() or str(e))
-        except Exception as e2:
-            raw2 = str(e2)
-        return False, f"{instance_name} 失败: {raw2}"
+        # ShellExecuteW 抛异常，直接返回错误（subprocess 已在方式1试过）
+        return False, f"{instance_name} 启动失败: {e}"
 
     return False, f"{instance_name} 失败 (err={err_code})"
 

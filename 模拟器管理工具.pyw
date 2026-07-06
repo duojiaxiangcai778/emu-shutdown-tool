@@ -2107,11 +2107,13 @@ class EmulatorShutdownApp:
             dnconsole = self._ld_paths.get("dnconsole")
             if not dnconsole or not os.path.isfile(dnconsole):
                 t["vars"]["st_lbl"].config(text="未找到 dnconsole", fg=RED)
+                t["_executing"] = False
                 return
 
             instances = t["instances"][:]
             if not instances:
                 t["vars"]["st_lbl"].config(text="无实例可选", fg=TEXT_LIGHT)
+                t["_executing"] = False
                 return
 
             def _work():
@@ -2318,7 +2320,7 @@ class EmulatorShutdownApp:
             return  # 无实例时静默跳过，不弹窗阻塞
         self._inline_start_task(t, GREEN, t.get("_time_up_fn"), t.get("_update_fn"))
     def _autoreset_launch(self, t):
-        self._auto_reset_task(t, GREEN, GREEN)
+        self._auto_reset_task(t, GREEN, YELLOW)
 
     def _exec_test_launch(self, instances):
         """5s测试启动：直接启动选中的实例"""
