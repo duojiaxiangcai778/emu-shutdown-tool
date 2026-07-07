@@ -1231,6 +1231,8 @@ class EmulatorShutdownApp:
     def _lazy_init(self):
         """UI 显示后的延迟初始化"""
         _log_info("程序启动，开始加载配置...")
+        # 必须优先初始化路径，再加载任务（任务 _time_up 在定时到期的线程中调用，需要 _ld_paths）
+        self._init_instance_manager()
         self._load_tasks_config()
         self._config_loaded = True
         # 读取健康检测开关
@@ -1242,8 +1244,8 @@ class EmulatorShutdownApp:
         self._mumu_monitors = {}
         self._mumu_lock = threading.Lock()  # 多线程访问保护
         _log_info(f"配置加载完成：关闭任务 {len(self.shutdown_tasks)} 个，启动任务 {len(self.launch_tasks)} 个，健康检测={'开' if self._mumu_health_check_enabled else '关'}")
-        # 先初始化实例管理器（加载路径），再启动扫描
-        self._init_instance_manager()
+        # 实例管理器已在 _load_tasks_config 前初始化，确保定时到期的 _time_up 能拿到路径
+        # self._init_instance_manager()  # 已提前执行
         # 开机自动恢复最新快照（后台线程，不阻塞主线程）
         def _bg_restore():
             try:
@@ -2128,9 +2130,24 @@ class EmulatorShutdownApp:
                     _log_info(f"_time_up: 回退成功 dnconsole={dnconsole}")
                 else:
                     _log_error(f"_time_up: dnconsole 不可用 self._ld_paths={dict(self._ld_paths)}")
-                    t["vars"]["st_lbl"].config(text="未找到 dnconsole", fg=RED)
-                    t["_executing"] = False
-                    return
+                    # 最后尝试：从 config.ld_path 直接找 dnconsole
+                    cfg2 = load_tool_config()
+                    ld_path = cfg2.get("paths", {}).get("ld_path", "")
+                    if ld_path:
+                        fallback = _find_ldconsole(ld_path)
+                        if fallback and os.path.isfile(fallback):
+                            self._ld_paths["dnconsole"] = fallback
+                            dnconsole = fallback
+                            _log_info(f"_time_up: 最终回退成功 dnconsole={fallback}")
+                            # 继续执行下面的启动逻辑
+                        else:
+                            t["vars"]["st_lbl"].config(text="未找到 dnconsole", fg=RED)
+                            t["_executing"] = False
+                            return
+                    else:
+                        t["vars"]["st_lbl"].config(text="未找到 dnconsole", fg=RED)
+                        t["_executing"] = False
+                        return
 
             instances = t["instances"][:]
             if not instances:
