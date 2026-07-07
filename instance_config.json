@@ -11,7 +11,21 @@
   ],
   "mumu_manager_path": "D:\\E\\MuMu Player 12\\nx_main\\MuMuManager.exe",
   "shutdown_tasks": [],
-  "launch_tasks": [],
+  "launch_tasks": [
+    {
+      "mode": "fixed",
+      "hour": 12,
+      "minute": 34,
+      "countdown_min": 30,
+      "enabled": true,
+      "instances": [
+        "mumu_0",
+        "mumu_1",
+        "mumu_2",
+        "mumu_3"
+      ]
+    }
+  ],
   "auto_launch": false,
   "shutdown_always": false,
   "restart_always": false,

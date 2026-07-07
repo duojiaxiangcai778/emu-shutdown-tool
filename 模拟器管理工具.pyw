@@ -4135,8 +4135,8 @@ class EmulatorShutdownApp:
             if mon:
                 stop_mumu_health_monitor(mon)
             ok, msg = shutdown_mumu_instance(self._mumu_path, index)
-            self.root.after(0, lambda: messagebox.showinfo(
-                "关闭结果" if ok else "关闭失败", msg))
+            self.root.after(0, lambda succ=ok, m=msg: self._toast(
+                "关闭结果" if succ else "关闭失败", m, 4000))
             self.root.after(500, self._scan_and_display_instances)
         threading.Thread(target=_work, daemon=True).start()
 
@@ -4205,8 +4205,8 @@ class EmulatorShutdownApp:
                 ok, msg = shutdown_mumu_instance(self._mumu_path, inst['index'])
                 if ok:
                     success += 1
-            self.root.after(0, lambda: messagebox.showinfo(
-                "关闭完成", f"成功 {success}/{total}"))
+            self.root.after(0, lambda: self._toast(
+                "关闭完成", f"成功 {success}/{total}", 4000))
             self.root.after(500, self._scan_and_display_instances)
         threading.Thread(target=_work, daemon=True).start()
 
@@ -4236,8 +4236,8 @@ class EmulatorShutdownApp:
                 time.sleep(delay)  # 在后台线程 sleep，不阻塞 UI
             for t in threads:
                 t.join(timeout=600)
-            self.root.after(0, lambda: messagebox.showinfo(
-                "启动完成", f"成功 {success[0]}/{total}"))
+            self.root.after(0, lambda: self._toast(
+                "启动完成", f"成功 {success[0]}/{total}", 4000))
             self.root.after(500, self._scan_and_display_instances)
 
         def _launch_one(name, dnconsole, success, lock):
@@ -4264,7 +4264,7 @@ class EmulatorShutdownApp:
             except Exception as _e:
                 pass
             time.sleep(5)
-            self.root.after(0, lambda: messagebox.showinfo("关闭完成", "已发送关闭指令"))
+            self.root.after(0, lambda: self._toast("关闭完成", "已发送关闭指令", 4000))
             self.root.after(500, self._scan_and_display_instances)
         threading.Thread(target=_work, daemon=True).start()
 
@@ -4278,8 +4278,8 @@ class EmulatorShutdownApp:
             return
         def _work():
             ok, msg = launch_instance(dnconsole, inst_name)
-            self.root.after(0, lambda: messagebox.showinfo(
-                "启动结果" if ok else "启动失败", msg))
+            self.root.after(0, lambda succ=ok, m=msg: self._toast(
+                "启动结果" if succ else "启动失败", m, 4000))
             self.root.after(500, self._scan_and_display_instances)
         threading.Thread(target=_work, daemon=True).start()
 
@@ -4307,8 +4307,8 @@ class EmulatorShutdownApp:
             except Exception as e:
                 ok = False
                 msg = f"关闭异常: {e}"
-            self.root.after(0, lambda: messagebox.showinfo(
-                "关闭结果" if ok else "关闭失败", msg))
+            self.root.after(0, lambda succ=ok, m=msg: self._toast(
+                "关闭结果" if succ else "关闭失败", m, 4000))
             self.root.after(500, self._scan_and_display_instances)
         threading.Thread(target=_work, daemon=True).start()
 

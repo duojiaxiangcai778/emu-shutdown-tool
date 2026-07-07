@@ -33,6 +33,9 @@ instance_config.json
 app_icon.png
 app_icon.ico
 
+# Trash
+.trash/
+
 # IDE
 .vscode/
 .idea/
