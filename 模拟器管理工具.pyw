@@ -2171,8 +2171,13 @@ class EmulatorShutdownApp:
 
                     # LDPlayer
                     if ld_names:
+                        _interval = 5
+                        try:
+                            _interval = int(self.launch_interval_var.get())
+                        except (ValueError, TypeError):
+                            pass
                         results = staggered_launch(
-                            dnconsole, ld_names, interval_seconds=5,
+                            dnconsole, ld_names, interval_seconds=_interval,
                             on_status=lambda s: self.root.after(0, lambda: t["vars"]["st_lbl"].config(text=s[:30], fg=YELLOW)),
                         )
                         ok += sum(1 for _, s, _ in results if s)
@@ -2194,7 +2199,7 @@ class EmulatorShutdownApp:
                                         with self._mumu_lock:
                                             self._mumu_monitors[idx] = monitor
                                         _log_info(f"_time_up MuMu {idx} 健康巡检已启动")
-                                time.sleep(3)
+                                time.sleep(_interval)
                             except Exception as _e_mu:
                                 _log_error(f"_time_up _work: MuMu {idx} 启动失败: {_e_mu}")
 
