@@ -2127,35 +2127,33 @@ class EmulatorShutdownApp:
             t["vars"]["st_lbl"].config(text="启动中...", fg=YELLOW)
             self._save_tasks_config()
 
-            # 尝试从配置文件回退 dnconsole 路径
-            dnconsole = self._ld_paths.get("dnconsole")
+            # 直接读配置文件获取路径（不依赖 _ld_paths，定时器可能先于路径加载触发）
+            cfg = load_tool_config()
+            dnconsole = cfg.get("paths", {}).get("dnconsole", "")
+            mumu_path = cfg.get("mumu_manager_path", "")
             if not dnconsole or not os.path.isfile(dnconsole):
-                _log_info(f"_time_up: 当前 dnconsole 不可用({dnconsole}), 尝试回退...")
-                cfg = load_tool_config()
-                dnconsole = cfg.get("paths", {}).get("dnconsole", "")
-                if dnconsole and os.path.isfile(dnconsole):
-                    self._ld_paths["dnconsole"] = dnconsole
-                    _log_info(f"_time_up: 回退成功 dnconsole={dnconsole}")
-                else:
-                    _log_error(f"_time_up: dnconsole 不可用 self._ld_paths={dict(self._ld_paths)}")
-                    # 最后尝试：从 config.ld_path 直接找 dnconsole
-                    cfg2 = load_tool_config()
-                    ld_path = cfg2.get("paths", {}).get("ld_path", "")
-                    if ld_path:
-                        fallback = _find_ldconsole(ld_path)
-                        if fallback and os.path.isfile(fallback):
-                            self._ld_paths["dnconsole"] = fallback
-                            dnconsole = fallback
-                            _log_info(f"_time_up: 最终回退成功 dnconsole={fallback}")
-                            # 继续执行下面的启动逻辑
-                        else:
-                            t["vars"]["st_lbl"].config(text="未找到 dnconsole", fg=RED)
-                            t["_executing"] = False
-                            return
-                    else:
-                        t["vars"]["st_lbl"].config(text="未找到 dnconsole", fg=RED)
-                        t["_executing"] = False
-                        return
+                ld_path = cfg.get("paths", {}).get("ld_path", "")
+                if ld_path:
+                    dnconsole = _find_ldconsole(ld_path)
+            if not dnconsole or not os.path.isfile(dnconsole):
+                # 配置文件完全没有 → 自动探测
+                from ld_instance_manager import auto_detect_paths
+                _detected = auto_detect_paths()
+                dnconsole = _detected.get("dnconsole", "") or dnconsole
+                if not mumu_path or not os.path.isfile(mumu_path):
+                    mumu_path = _detected.get("mumu_manager_path", "")
+                _log_info(f"_time_up: 自动探测 dnconsole={dnconsole}, mumu_path={mumu_path}")
+            if dnconsole and os.path.isfile(dnconsole):
+                # 回填到 self._ld_paths 供后续使用
+                self._ld_paths["dnconsole"] = dnconsole
+                if mumu_path:
+                    self._mumu_path = mumu_path
+                _log_info(f"_time_up: dnconsole 就绪 {dnconsole}")
+            else:
+                _log_error(f"_time_up: dnconsole 不可用，跳过启动")
+                t["vars"]["st_lbl"].config(text="未找到 dnconsole", fg=RED)
+                t["_executing"] = False
+                return
 
             instances = t["instances"][:]
             if not instances:
@@ -2180,18 +2178,18 @@ class EmulatorShutdownApp:
                         ok += sum(1 for _, s, _ in results if s)
 
                     # MuMu
-                    if mumu_keys and self._mumu_path:
+                    if mumu_keys and mumu_path:
                         from ld_instance_manager import launch_mumu_instance, start_mumu_health_monitor
                         for k in mumu_keys:
                             idx = int(k.replace("mumu_", ""))
                             try:
-                                succ_mu, _ = launch_mumu_instance(self._mumu_path, idx)
+                                succ_mu, _ = launch_mumu_instance(mumu_path, idx)
                                 if succ_mu:
                                     ok += 1
                                     # 启动成功后开启健康巡检
                                     if self._mumu_health_check_enabled:
                                         monitor = start_mumu_health_monitor(
-                                            self._mumu_path, idx,
+                                            mumu_path, idx,
                                             check_interval=self._mumu_health_interval * 60)
                                         with self._mumu_lock:
                                             self._mumu_monitors[idx] = monitor
