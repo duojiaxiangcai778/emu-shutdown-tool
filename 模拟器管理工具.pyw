@@ -2173,13 +2173,21 @@ class EmulatorShutdownApp:
 
                     # MuMu
                     if mumu_keys and self._mumu_path:
-                        from ld_instance_manager import launch_mumu_instance
+                        from ld_instance_manager import launch_mumu_instance, start_mumu_health_monitor
                         for k in mumu_keys:
                             idx = int(k.replace("mumu_", ""))
                             try:
                                 succ_mu, _ = launch_mumu_instance(self._mumu_path, idx)
                                 if succ_mu:
                                     ok += 1
+                                    # 启动成功后开启健康巡检
+                                    if self._mumu_health_check_enabled:
+                                        monitor = start_mumu_health_monitor(
+                                            self._mumu_path, idx,
+                                            check_interval=self._mumu_health_interval * 60)
+                                        with self._mumu_lock:
+                                            self._mumu_monitors[idx] = monitor
+                                        _log_info(f"_time_up MuMu {idx} 健康巡检已启动")
                                 time.sleep(3)
                             except Exception as _e_mu:
                                 _log_error(f"_time_up _work: MuMu {idx} 启动失败: {_e_mu}")
@@ -3163,7 +3171,7 @@ class EmulatorShutdownApp:
 
             # ---- MuMu 自启动 ----
             if selected_mumu:
-                from ld_instance_manager import launch_mumu_instance
+                from ld_instance_manager import launch_mumu_instance, start_mumu_health_monitor
                 self.root.after(0, lambda: self.launch_status_var.set(f"正在启动 {len(selected_mumu)} 个 MuMu 实例..."))
                 ok = 0
                 for name in selected_mumu:
@@ -3173,6 +3181,14 @@ class EmulatorShutdownApp:
                             result = launch_mumu_instance(self._mumu_path, idx)
                             if result:
                                 ok += 1
+                                # 启动成功后开启健康巡检
+                                if self._mumu_health_check_enabled:
+                                    monitor = start_mumu_health_monitor(
+                                        self._mumu_path, idx,
+                                        check_interval=self._mumu_health_interval * 60)
+                                    with self._mumu_lock:
+                                        self._mumu_monitors[idx] = monitor
+                                    _log_info(f"自启动 MuMu {idx} 健康巡检已启动")
                             break
                     time.sleep(interval)
                 self.root.after(0, lambda: self.launch_status_var.set(f"MuMu 自启动完成 {ok}/{len(selected_mumu)}"))
