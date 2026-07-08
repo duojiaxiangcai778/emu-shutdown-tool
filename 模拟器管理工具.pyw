@@ -1972,6 +1972,14 @@ class EmulatorShutdownApp:
             t["vars"]["act_btn"].set_text("…")
             t["vars"]["st_lbl"].config(text="执行中...", fg=YELLOW)
             self._save_tasks_config()
+            # 停止所有 MuMu 健康巡检，防止关闭后自动重启跟关闭任务冲突
+            from ld_instance_manager import stop_mumu_health_monitor
+            with self._mumu_lock:
+                _mons = list(self._mumu_monitors.items())
+                self._mumu_monitors.clear()
+            for _, _m in _mons:
+                stop_mumu_health_monitor(_m)
+                _log_info("关闭任务: 已停止 MuMu 健康巡检")
             should_shutdown = self.shutdown_var.get()
             _log_info(f"定时执行: should_shutdown={should_shutdown}")
             def _on_done(count, success, fail_count, failed_names, _, shutdown_executed):
@@ -2419,13 +2427,21 @@ class EmulatorShutdownApp:
 
                 # MuMu
                 if mumu_keys and self._mumu_path:
-                    from ld_instance_manager import launch_mumu_instance
+                    from ld_instance_manager import launch_mumu_instance, start_mumu_health_monitor
                     for k in mumu_keys:
-                        idx = k.replace("mumu_", "")
+                        idx = int(k.replace("mumu_", ""))
                         try:
-                            ok, msg = launch_mumu_instance(self._mumu_path, int(idx))
+                            ok, msg = launch_mumu_instance(self._mumu_path, idx)
                             if ok:
                                 succ += 1
+                                # 测试启动也挂上健康巡检（任何启动方式都应有检测）
+                                if self._mumu_health_check_enabled:
+                                    monitor = start_mumu_health_monitor(
+                                        self._mumu_path, idx,
+                                        check_interval=self._mumu_health_interval * 60)
+                                    with self._mumu_lock:
+                                        self._mumu_monitors[idx] = monitor
+                                    _log_info(f"5s测试 MuMu {idx} 健康巡检已启动")
                             time.sleep(3)
                         except Exception as e:
                             _log_error(f"测试启动 MuMu {idx}: {e}")
