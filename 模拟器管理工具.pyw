@@ -2135,30 +2135,43 @@ class EmulatorShutdownApp:
             t["vars"]["st_lbl"].config(text="启动中...", fg=YELLOW)
             self._save_tasks_config()
 
-            # 直接读配置文件获取路径（不依赖 _ld_paths，定时器可能先于路径加载触发）
-            cfg = load_tool_config()
-            dnconsole = cfg.get("paths", {}).get("dnconsole", "")
-            mumu_path = cfg.get("mumu_manager_path", "")
+            # 读路径：优先用 self._ld_paths（跟全部启动按钮一样），缺少时自动探测
+            dnconsole = self._ld_paths.get("dnconsole") if self._ld_paths else None
+            mumu_path = self._mumu_path
             if not dnconsole or not os.path.isfile(dnconsole):
-                ld_path = cfg.get("paths", {}).get("ld_path", "")
-                if ld_path:
-                    dnconsole = _find_ldconsole(ld_path)
-            if not dnconsole or not os.path.isfile(dnconsole):
-                # 配置文件完全没有 → 自动探测
-                from ld_instance_manager import auto_detect_paths
-                _detected = auto_detect_paths()
-                dnconsole = _detected.get("dnconsole", "") or dnconsole
-                if not mumu_path or not os.path.isfile(mumu_path):
-                    mumu_path = _detected.get("mumu_manager_path", "")
-                _log_info(f"_time_up: 自动探测 dnconsole={dnconsole}, mumu_path={mumu_path}")
+                # self._ld_paths 没有 → 读配置文件
+                cfg = load_tool_config()
+                dnconsole = cfg.get("paths", {}).get("dnconsole", "")
+                mumu_path = cfg.get("mumu_manager_path", "") or mumu_path
+                if not dnconsole or not os.path.isfile(dnconsole):
+                    ld_path = cfg.get("paths", {}).get("ld_path", "")
+                    if ld_path:
+                        dnconsole = _find_ldconsole(ld_path)
+                if not dnconsole or not os.path.isfile(dnconsole):
+                    # 还没有 → 自动探测（全盘搜索）
+                    from ld_instance_manager import auto_detect_paths
+                    _detected = auto_detect_paths()
+                    dnconsole = _detected.get("dnconsole", "") or dnconsole
+                    if not mumu_path or not os.path.isfile(mumu_path):
+                        mumu_path = _detected.get("mumu_manager_path", "")
+                    # 额外搜 MuMuManager（auto_detect 不搜 MuMu）
+                    if not mumu_path or not os.path.isfile(mumu_path):
+                        for _try in [
+                            r"D:\E\MuMu Player 12\nx_main\MuMuManager.exe",
+                            r"C:\Program Files\Netease\MuMu\nx_main\MuMuManager.exe",
+                        ]:
+                            if os.path.isfile(_try):
+                                mumu_path = _try
+                                _log_info(f"_time_up: 额外搜到 MuMu {mumu_path}")
+                                break
+                    _log_info(f"_time_up: 自动探测 dnconsole={dnconsole}, mumu_path={mumu_path}")
             if dnconsole and os.path.isfile(dnconsole):
-                # 回填到 self._ld_paths 供后续使用
                 self._ld_paths["dnconsole"] = dnconsole
                 if mumu_path:
                     self._mumu_path = mumu_path
-                _log_info(f"_time_up: dnconsole 就绪 {dnconsole}")
+                _log_info(f"_time_up: 路径就绪 dnconsole={dnconsole} mumu={mumu_path}")
             else:
-                _log_error(f"_time_up: dnconsole 不可用，跳过启动")
+                _log_error(f"_time_up: dnconsole 不可用，跳过启动 (ld_paths={self._ld_paths})")
                 t["vars"]["st_lbl"].config(text="未找到 dnconsole", fg=RED)
                 t["_executing"] = False
                 return
@@ -2596,6 +2609,12 @@ class EmulatorShutdownApp:
             _log_info(f"_save_tasks_config: 关闭={len(shutdown_data)}个 启动={len(launch_data)}个")
             config["mumu_health_check"] = self._mumu_health_check_enabled
             config["mumu_health_interval"] = self._mumu_health_interval
+            # 保护：保存时确保 paths 不被擦除（按钮路径用 self._ld_paths，定时器读 config）
+            if self._ld_paths:
+                config.setdefault("paths", {})
+                config["paths"].update(self._ld_paths)
+            if self._mumu_path:
+                config["mumu_manager_path"] = self._mumu_path
             save_tool_config(config)
         except Exception as e:
             _log_error(f"_save_tasks_config_inner 整体异常: {type(e).__name__}: {e}")
