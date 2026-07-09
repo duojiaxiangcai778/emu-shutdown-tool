@@ -1231,13 +1231,21 @@ class EmulatorShutdownApp:
     def _lazy_init(self):
         """UI 显示后的延迟初始化"""
         try:
+            from ld_instance_manager import TOOL_CONFIG_FILE as _CFG_PATH
             _log_info("程序启动，开始加载配置...")
-            _flush_log()  # 先落盘一次，确保即使后面崩了也有日志可查
+            # 启动时打印实际读到的配置文件路径和内容快照
+            _raw_cfg = load_tool_config()
+            _raw_launch = _raw_cfg.get("launch_tasks", [])
+            _raw_shutdown = _raw_cfg.get("shutdown_tasks", [])
+            _log_info(f"配置来源: {_CFG_PATH}")
+            _log_info(f"配置文件原始内容 — 关闭任务: {len(_raw_shutdown)}个, 启动任务: {len(_raw_launch)}个")
+            if _raw_launch:
+                _log_info(f"启动任务详情: {json.dumps(_raw_launch, ensure_ascii=False)[:200]}")
+            _flush_log()
 
             self._init_instance_manager()
             self._load_tasks_config()
             self._config_loaded = True
-            # 读取健康检测开关
             cfg = load_tool_config()
             self._mumu_health_check_enabled = cfg.get("mumu_health_check", False)
             self._mumu_health_interval = cfg.get("mumu_health_interval", 20)
