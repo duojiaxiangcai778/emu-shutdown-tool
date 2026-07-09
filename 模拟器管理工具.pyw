@@ -1230,60 +1230,64 @@ class EmulatorShutdownApp:
 
     def _lazy_init(self):
         """UI 显示后的延迟初始化"""
-        _log_info("程序启动，开始加载配置...")
-        # 必须优先初始化路径，再加载任务（任务 _time_up 在定时到期的线程中调用，需要 _ld_paths）
-        self._init_instance_manager()
-        self._load_tasks_config()
-        self._config_loaded = True
-        # 读取健康检测开关
-        cfg = load_tool_config()
-        self._mumu_health_check_enabled = cfg.get("mumu_health_check", False)
-        self._mumu_health_interval = cfg.get("mumu_health_interval", 20)  # 默认20分钟
-        self._mumu_health_var = tk.BooleanVar(value=self._mumu_health_check_enabled)
-        self._log_refresh_id = None
-        self._mumu_monitors = {}
-        self._mumu_lock = threading.Lock()  # 多线程访问保护
-        _log_info(f"配置加载完成：关闭任务 {len(self.shutdown_tasks)} 个，启动任务 {len(self.launch_tasks)} 个，健康检测={'开' if self._mumu_health_check_enabled else '关'}")
-        # 实例管理器已在 _load_tasks_config 前初始化，确保定时到期的 _time_up 能拿到路径
-        # self._init_instance_manager()  # 已提前执行
-        # 开机自动恢复最新快照（后台线程，不阻塞主线程）
-        def _bg_restore():
-            try:
-                from ld_instance_manager import list_snapshots, restore_snapshot
-                snaps = list_snapshots(SNAPSHOT_DIR)
-                if not snaps:
-                    return
-                latest = snaps[0]
-                _log_info(f"发现 {len(snaps)} 个快照，自动恢复最新: {latest['timestamp']}")
-                vms = self._ld_paths.get("vms_config_dir")
-                mp = self._ld_paths.get("multiplayer_path")
-                if not vms or not mp:
-                    _cfg = self._find_config_file()
-                    if _cfg:
-                        with open(_cfg, 'r', encoding='utf-8') as _f:
-                            _saved = json.load(_f)
-                        if not vms:
-                            vms = _saved.get("paths", {}).get("vms_config_dir")
-                        if not mp:
-                            mp = _saved.get("paths", {}).get("multiplayer_path")
-                if not vms or not mp:
-                    from ld_instance_manager import auto_detect_paths
-                    detected = auto_detect_paths()
-                    if not vms and detected.get("vms_config_dir"):
-                        vms = detected["vms_config_dir"]
-                    if not mp and detected.get("multiplayer_path"):
-                        mp = detected["multiplayer_path"]
-                mp_cfg = os.path.join(mp, "vms", "config") if mp and os.path.isdir(os.path.join(mp, "vms", "config")) else None
-                count, msg = restore_snapshot(latest["path"], vms, mp_cfg, mumu_vms_dir=self._get_mumu_vms_dir())
-                if count > 0:
-                    _log_info(f"快照恢复成功: {msg}")
-                    self.root.after(0, self._scan_and_display_instances)
-            except Exception as e:
-                _log_error(f"开机自动恢复快照失败: {e}")
-        threading.Thread(target=_bg_restore, daemon=True).start()
-        self._start_scan_loop()
-        # 启动右侧日志面板刷新（每秒）
-        self.root.after(5000, self._refresh_log_display)
+        try:
+            _log_info("程序启动，开始加载配置...")
+            _flush_log()  # 先落盘一次，确保即使后面崩了也有日志可查
+
+            self._init_instance_manager()
+            self._load_tasks_config()
+            self._config_loaded = True
+            # 读取健康检测开关
+            cfg = load_tool_config()
+            self._mumu_health_check_enabled = cfg.get("mumu_health_check", False)
+            self._mumu_health_interval = cfg.get("mumu_health_interval", 20)
+            self._mumu_health_var = tk.BooleanVar(value=self._mumu_health_check_enabled)
+            self._log_refresh_id = None
+            self._mumu_monitors = {}
+            self._mumu_lock = threading.Lock()
+            _log_info(f"配置加载完成：关闭任务 {len(self.shutdown_tasks)} 个，启动任务 {len(self.launch_tasks)} 个，健康检测={'开' if self._mumu_health_check_enabled else '关'}")
+
+            # 开机自动恢复最新快照（后台线程，不阻塞主线程）
+            def _bg_restore():
+                try:
+                    from ld_instance_manager import list_snapshots, restore_snapshot
+                    snaps = list_snapshots(SNAPSHOT_DIR)
+                    if not snaps:
+                        return
+                    latest = snaps[0]
+                    _log_info(f"发现 {len(snaps)} 个快照，自动恢复最新: {latest['timestamp']}")
+                    vms = self._ld_paths.get("vms_config_dir")
+                    mp = self._ld_paths.get("multiplayer_path")
+                    if not vms or not mp:
+                        _cfg = self._find_config_file()
+                        if _cfg:
+                            with open(_cfg, 'r', encoding='utf-8') as _f:
+                                _saved = json.load(_f)
+                            if not vms:
+                                vms = _saved.get("paths", {}).get("vms_config_dir")
+                            if not mp:
+                                mp = _saved.get("paths", {}).get("multiplayer_path")
+                    if not vms or not mp:
+                        from ld_instance_manager import auto_detect_paths
+                        detected = auto_detect_paths()
+                        if not vms and detected.get("vms_config_dir"):
+                            vms = detected["vms_config_dir"]
+                        if not mp and detected.get("multiplayer_path"):
+                            mp = detected["multiplayer_path"]
+                    mp_cfg = os.path.join(mp, "vms", "config") if mp and os.path.isdir(os.path.join(mp, "vms", "config")) else None
+                    count, msg = restore_snapshot(latest["path"], vms, mp_cfg, mumu_vms_dir=self._get_mumu_vms_dir())
+                    if count > 0:
+                        _log_info(f"快照恢复成功: {msg}")
+                        self.root.after(0, self._scan_and_display_instances)
+                except Exception as e:
+                    _log_error(f"开机自动恢复快照失败: {e}")
+            threading.Thread(target=_bg_restore, daemon=True).start()
+            self._start_scan_loop()
+            self.root.after(5000, self._refresh_log_display)
+            _flush_log()
+        except Exception as _e:
+            _log_error("_lazy_init初始化异常", _e)
+            _flush_log()
 
     # ---------- UI 构建 ----------
 
@@ -1783,16 +1787,20 @@ class EmulatorShutdownApp:
     def _make_loop_fn(self, t, time_up_fn, update_fn):
         """创建任务倒计时循环（通用）"""
         def _loop():
-            while t["running"]:
-                rem = int(t["target_ts"] - time.time())
-                if rem <= 0:
-                    _log_info(f"计时器到期: id={t.get('id')} type={t.get('type')}")
-                    self.root.after(0, lambda: time_up_fn(t)); break
-                t["remaining"] = rem
-                if not t.get("_pending_update"):
-                    t["_pending_update"] = True
-                    self.root.after(0, lambda: update_fn(t))
-                time.sleep(0.5)
+            try:
+                while t["running"]:
+                    rem = int(t["target_ts"] - time.time())
+                    if rem <= 0:
+                        _log_info(f"计时器到期: id={t.get('id')} type={t.get('type')}")
+                        self.root.after(0, lambda: time_up_fn(t)); break
+                    t["remaining"] = rem
+                    if not t.get("_pending_update"):
+                        t["_pending_update"] = True
+                        self.root.after(0, lambda: update_fn(t))
+                    time.sleep(0.5)
+            except Exception as _e:
+                _log_error(f"定时器循环异常 id={t.get('id')}", _e)
+                t["running"] = False
         return _loop
 
     def _start_task(self, t, color, time_up_fn, update_fn):
