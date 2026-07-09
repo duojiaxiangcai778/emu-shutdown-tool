@@ -3127,6 +3127,10 @@ class EmulatorShutdownApp:
 
         self.inst_rows_frame.pack(fill="x")
 
+        # 给已经运行的 MuMu 实例自动挂上健康检测
+        if self._mumu_health_check_enabled and self._mumu_instances:
+            self._start_health_monitors_for_running()
+
         if not self._startup_launch_done:
             self.root.after(500, self._auto_launch_on_startup)
 
@@ -4059,6 +4063,31 @@ class EmulatorShutdownApp:
             _log_info("已停止所有 MuMu 定时巡检")
         _log_info(f"MuMu健康检测: {'开' if self._mumu_health_check_enabled else '关'}, 间隔={self._mumu_health_interval}分钟")
         self._save_tasks_config()
+
+    def _start_health_monitors_for_running(self):
+        """给所有已运行的 MuMu 实例挂上健康检测线程"""
+        if not self._mumu_health_check_enabled or not self._mumu_instances:
+            return
+        from ld_instance_manager import start_mumu_health_monitor
+        started = 0
+        for inst in self._mumu_instances:
+            idx = inst.get("index")
+            if not idx:
+                continue
+            if not inst.get("running", False):
+                continue
+            # 已经挂了的跳过
+            if idx in self._mumu_monitors:
+                continue
+            monitor = start_mumu_health_monitor(
+                self._mumu_path, idx,
+                check_interval=self._mumu_health_interval * 60)
+            with self._mumu_lock:
+                self._mumu_monitors[idx] = monitor
+            started += 1
+            _log_info(f"MuMu {idx} 开机健康巡检已启动（每{self._mumu_health_interval}分钟）")
+        if started:
+            _log_info(f"已为 {started} 个运行中的 MuMu 实例挂上健康检测")
 
     def _mumu_diagnose(self):
         """MuMu 诊断：扫描弹窗 + ADB 状态，输出到日志和 toast"""

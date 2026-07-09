@@ -19,10 +19,9 @@
       "countdown_min": 30,
       "enabled": true,
       "instances": [
+        "leidian0",
         "mumu_0",
-        "mumu_1",
-        "mumu_2",
-        "mumu_3"
+        "mumu_1"
       ]
     }
   ],
