@@ -1322,7 +1322,14 @@ class EmulatorShutdownApp:
         main_canvas = tk.Canvas(left_frame, bg=BG, highlightthickness=0)
         main_scrollbar = ttk.Scrollbar(left_frame, orient="vertical", command=main_canvas.yview)
         main_frame = tk.Frame(main_canvas, bg=BG, padx=16, pady=12)
-        main_frame.bind("<Configure>", lambda e: main_canvas.configure(scrollregion=main_canvas.bbox("all")))
+        def _set_scrollregion(e, c=main_canvas):
+            try:
+                b = c.bbox("all")
+                if b:
+                    c.configure(scrollregion=b)
+            except Exception:
+                pass
+        main_frame.bind("<Configure>", _set_scrollregion)
         main_canvas.create_window((0, 0), window=main_frame, anchor="nw", tags="main_inner")
         main_canvas.configure(yscrollcommand=main_scrollbar.set)
         main_scrollbar.pack(side="right", fill="y")
@@ -1357,14 +1364,26 @@ class EmulatorShutdownApp:
         self._log_text.pack(fill="both", expand=True)
         paned.add(right_frame, width=280, stretch="never")
 
+        # 防抖：拖拽 PanedWindow 时连续 Configure 事件只响应最后一次
+        main_cfg_after_id = [None]
         def _on_mf_cfg(event):
-            # 防止宽度相同触发级联 Configure 事件（滚轮操作后闪屏/卡死）
-            try:
-                cur = main_canvas.itemcget("main_inner", "width")
-                if str(cur) != str(event.width):
+            nonlocal main_cfg_after_id
+            # 取消上一次防抖
+            if main_cfg_after_id[0] is not None:
+                try:
+                    root.after_cancel(main_cfg_after_id[0])
+                except Exception:
+                    pass
+                main_cfg_after_id[0] = None
+            # 延迟执行，让连续事件只触发一次 itemconfig
+            def _do_resize():
+                try:
+                    cur = main_canvas.itemcget("main_inner", "width")
+                    if str(cur) != str(event.width):
+                        main_canvas.itemconfig("main_inner", width=event.width)
+                except tk.TclError:
                     main_canvas.itemconfig("main_inner", width=event.width)
-            except tk.TclError:
-                main_canvas.itemconfig("main_inner", width=event.width)
+            main_cfg_after_id[0] = root.after(10, _do_resize)
         main_canvas.bind("<Configure>", _on_mf_cfg)
 
         # ---------- 卡片工厂 ----------
@@ -1564,8 +1583,14 @@ class EmulatorShutdownApp:
         shutdown_canvas = tk.Canvas(shutdown_scroll_f, bg=CARD, highlightthickness=0, height=100)
         shutdown_sb = ttk.Scrollbar(shutdown_scroll_f, orient="vertical", command=shutdown_canvas.yview)
         self.shutdown_tasks_frame = tk.Frame(shutdown_canvas, bg=CARD)
-        self.shutdown_tasks_frame.bind("<Configure>",
-            lambda e: shutdown_canvas.configure(scrollregion=shutdown_canvas.bbox("all")))
+        def _set_shutdown_sr(e, c=shutdown_canvas):
+            try:
+                b = c.bbox("all")
+                if b:
+                    c.configure(scrollregion=b)
+            except Exception:
+                pass
+        self.shutdown_tasks_frame.bind("<Configure>", _set_shutdown_sr)
         shutdown_canvas.create_window((0, 0), window=self.shutdown_tasks_frame, anchor="nw", tags="inner")
         shutdown_canvas.configure(yscrollcommand=shutdown_sb.set)
         shutdown_canvas.pack(side="left", fill="both", expand=True)
@@ -1614,8 +1639,14 @@ class EmulatorShutdownApp:
         launch_canvas = tk.Canvas(launch_scroll_f, bg=CARD, highlightthickness=0, height=100)
         launch_sb = ttk.Scrollbar(launch_scroll_f, orient="vertical", command=launch_canvas.yview)
         self.launch_tasks_frame = tk.Frame(launch_canvas, bg=CARD)
-        self.launch_tasks_frame.bind("<Configure>",
-            lambda e: launch_canvas.configure(scrollregion=launch_canvas.bbox("all")))
+        def _set_launch_sr(e, c=launch_canvas):
+            try:
+                b = c.bbox("all")
+                if b:
+                    c.configure(scrollregion=b)
+            except Exception:
+                pass
+        self.launch_tasks_frame.bind("<Configure>", _set_launch_sr)
         launch_canvas.create_window((0, 0), window=self.launch_tasks_frame, anchor="nw", tags="inner")
         launch_canvas.configure(yscrollcommand=launch_sb.set)
         launch_canvas.pack(side="left", fill="both", expand=True)
@@ -2303,7 +2334,14 @@ class EmulatorShutdownApp:
         sb = tk.Scrollbar(f, orient="vertical", command=canvas.yview,
                           width=16, bg=BORDER, troughcolor=BG)
         inner = tk.Frame(canvas, bg=CARD)
-        inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        def _set_dialog_sr(e, c=canvas):
+            try:
+                b = c.bbox("all")
+                if b:
+                    c.configure(scrollregion=b)
+            except Exception:
+                pass
+        inner.bind("<Configure>", _set_dialog_sr)
         canvas.create_window((0, 0), window=inner, anchor="nw", tags="inner")
         canvas.configure(yscrollcommand=sb.set)
 
@@ -2502,7 +2540,7 @@ class EmulatorShutdownApp:
     def _start_scan_loop(self):
         self._trigger_scan()
         # 定期扫描时顺便刷新实例列表显示
-        self.root.after(0, self._scan_and_display_instances)
+        self.root.after_idle(self._scan_and_display_instances)
         # 取消旧 timer 后再注册新 timer，防止叠加
         if hasattr(self, 'scan_timer_id') and self.scan_timer_id:
             try:
@@ -2890,173 +2928,180 @@ class EmulatorShutdownApp:
 
     def _scan_and_display_instances(self):
         """扫描并同时显示 LDPlayer + MuMu 实例"""
-        # ---- 扫描 LDPlayer 实例 ----
-        vms_cfg = self._ld_paths.get("vms_config_dir")
-        # 路径缺失 → 异步检测（不阻塞主线程）
-        if not vms_cfg or not self._mumu_path:
-            if not self._path_search_running:
-                self._path_search_running = True
-                def _search():
-                    try:
-                        from ld_instance_manager import auto_detect_paths
-                        detected = auto_detect_paths()
-                        self.root.after(0, lambda: self._apply_detected_paths(detected))
-                    finally:
-                        self._path_search_running = False
-                threading.Thread(target=_search, daemon=True).start()
-            # 用现有路径继续往下（可能为 None），不阻塞主线程等异步结果
+        # 防重入：如果正在扫描中，跳过本次调用
+        if getattr(self, '_scanning_instances', False):
+            return
+        self._scanning_instances = True
+        try:
+                # ---- 扫描 LDPlayer 实例 ----
+            vms_cfg = self._ld_paths.get("vms_config_dir")
+            # 路径缺失 → 异步检测（不阻塞主线程）
+            if not vms_cfg or not self._mumu_path:
+                if not self._path_search_running:
+                    self._path_search_running = True
+                    def _search():
+                        try:
+                            from ld_instance_manager import auto_detect_paths
+                            detected = auto_detect_paths()
+                            self.root.after(0, lambda: self._apply_detected_paths(detected))
+                        finally:
+                            self._path_search_running = False
+                    threading.Thread(target=_search, daemon=True).start()
+                # 用现有路径继续往下（可能为 None），不阻塞主线程等异步结果
 
-        ld_instances = []
-        if vms_cfg:
-            ld_instances = scan_instances(vms_cfg)
-            dnconsole = self._ld_paths.get("dnconsole")
-            check_running_instances(ld_instances, dnconsole)
-        self._instances = ld_instances
+            ld_instances = []
+            if vms_cfg:
+                ld_instances = scan_instances(vms_cfg)
+                dnconsole = self._ld_paths.get("dnconsole")
+                check_running_instances(ld_instances, dnconsole)
+            self._instances = ld_instances
 
-        # ---- 扫描 MuMu 实例 ----
-        mumu_instances = []
-        if self._mumu_path and os.path.isfile(self._mumu_path):
-            mumu_instances = scan_mumu_instances(self._mumu_path)
-        self._mumu_instances = mumu_instances
+            # ---- 扫描 MuMu 实例 ----
+            mumu_instances = []
+            if self._mumu_path and os.path.isfile(self._mumu_path):
+                mumu_instances = scan_mumu_instances(self._mumu_path)
+            self._mumu_instances = mumu_instances
 
-        # ---- 无闪烁重建：隐藏→重建→显示 ----
-        self.inst_rows_frame.pack_forget()
-        for w in self.inst_rows_frame.winfo_children():
-            w.destroy()
+            # ---- 无闪烁重建：隐藏→重建→显示 ----
+            self.inst_rows_frame.pack_forget()
+            for w in self.inst_rows_frame.winfo_children():
+                w.destroy()
 
-        self._inst_vars = []
-        has_any = bool(ld_instances or mumu_instances)
+            self._inst_vars = []
+            has_any = bool(ld_instances or mumu_instances)
 
-        if not has_any:
-            tk.Label(self.inst_rows_frame, text="  未找到任何实例",
-                     font=("Microsoft YaHei", 9), bg=CARD, fg=TEXT_SUB).pack(fill="x")
-        else:
-            # >>> LDPlayer 实例 <<<
-            if ld_instances:
-                # 子标题
-                ld_hdr = tk.Frame(self.inst_rows_frame, bg=BG_LIGHT)
-                ld_hdr.pack(fill="x", pady=(0, 2))
-                tk.Label(ld_hdr, text="  雷电模拟器", font=self.f_small,
-                         bg=BG_LIGHT, fg=PRIMARY).pack(side="left")
-                RoundedButton(ld_hdr, text="启动全部", command=self._on_ld_launch_all,
-                              bg=GREEN, fg="white", font=self.f_small, padx=6, pady=1).pack(side="right", padx=(0, 4))
-                RoundedButton(ld_hdr, text="关闭全部", command=self._on_ld_shutdown_all,
-                              bg=RED, fg="white", font=self.f_small, padx=6, pady=1).pack(side="right", padx=(0, 4))
+            if not has_any:
+                tk.Label(self.inst_rows_frame, text="  未找到任何实例",
+                         font=("Microsoft YaHei", 9), bg=CARD, fg=TEXT_SUB).pack(fill="x")
+            else:
+                # >>> LDPlayer 实例 <<<
+                if ld_instances:
+                    # 子标题
+                    ld_hdr = tk.Frame(self.inst_rows_frame, bg=BG_LIGHT)
+                    ld_hdr.pack(fill="x", pady=(0, 2))
+                    tk.Label(ld_hdr, text="  雷电模拟器", font=self.f_small,
+                             bg=BG_LIGHT, fg=PRIMARY).pack(side="left")
+                    RoundedButton(ld_hdr, text="启动全部", command=self._on_ld_launch_all,
+                                  bg=GREEN, fg="white", font=self.f_small, padx=6, pady=1).pack(side="right", padx=(0, 4))
+                    RoundedButton(ld_hdr, text="关闭全部", command=self._on_ld_shutdown_all,
+                                  bg=RED, fg="white", font=self.f_small, padx=6, pady=1).pack(side="right", padx=(0, 4))
 
-                for inst in ld_instances:
-                    row = tk.Frame(self.inst_rows_frame, bg=CARD)
-                    row.pack(fill="x", pady=1)
+                    for inst in ld_instances:
+                        row = tk.Frame(self.inst_rows_frame, bg=CARD)
+                        row.pack(fill="x", pady=1)
 
-                    checked = inst['name'] in self._auto_launch_instances
-                    var = tk.BooleanVar(value=checked)
-                    cb = tk.Checkbutton(row, variable=var, bg=CARD,
-                                        activebackground=CARD, selectcolor=CARD, width=4,
-                                        command=self._save_auto_launch_instances)
-                    cb.pack(side="left")
-                    self._inst_vars.append((var, inst))
+                        checked = inst['name'] in self._auto_launch_instances
+                        var = tk.BooleanVar(value=checked)
+                        cb = tk.Checkbutton(row, variable=var, bg=CARD,
+                                            activebackground=CARD, selectcolor=CARD, width=4,
+                                            command=self._save_auto_launch_instances)
+                        cb.pack(side="left")
+                        self._inst_vars.append((var, inst))
 
-                    summary = get_instance_summary(inst['settings'])
-                    root_mark = "Y" if summary['root'] else "N"
-                    set_text = f"{summary['cpu']}核 {summary['memory']}M Root:{root_mark}"
+                        summary = get_instance_summary(inst['settings'])
+                        root_mark = "Y" if summary['root'] else "N"
+                        set_text = f"{summary['cpu']}核 {summary['memory']}M Root:{root_mark}"
 
-                    display_name = inst['name']
-                    if summary['name']:
-                        display_name = f"{inst['name']} ({summary['name']})"
-                    tk.Label(row, text=display_name, font=("Microsoft YaHei", 9, "bold"),
-                             bg=CARD, fg=TEXT, width=18, anchor="w").pack(side="left")
-                    tk.Label(row, text=set_text, font=("Consolas", 9),
-                             bg=CARD, fg=TEXT_SUB, width=30, anchor="w").pack(side="left")
+                        display_name = inst['name']
+                        if summary['name']:
+                            display_name = f"{inst['name']} ({summary['name']})"
+                        tk.Label(row, text=display_name, font=("Microsoft YaHei", 9, "bold"),
+                                 bg=CARD, fg=TEXT, width=18, anchor="w").pack(side="left")
+                        tk.Label(row, text=set_text, font=("Consolas", 9),
+                                 bg=CARD, fg=TEXT_SUB, width=30, anchor="w").pack(side="left")
 
-                    status = "运行中" if inst['running'] else "已停止"
-                    color = GREEN if inst['running'] else TEXT_LIGHT
-                    tk.Label(row, text=status, font=("Microsoft YaHei", 9),
-                             bg=CARD, fg=color, width=6, anchor="w").pack(side="left")
+                        status = "运行中" if inst['running'] else "已停止"
+                        color = GREEN if inst['running'] else TEXT_LIGHT
+                        tk.Label(row, text=status, font=("Microsoft YaHei", 9),
+                                 bg=CARD, fg=color, width=6, anchor="w").pack(side="left")
 
-                    # 单个启动/关闭按钮
-                    inst_name = inst['name']
-                    RoundedButton(row, text="▶", command=lambda n=inst_name: self._on_ld_launch_one(n),
-                                  bg=GREEN, fg="white", font=("Consolas", 8, "bold"),
-                                  padx=4, pady=0).pack(side="right", padx=(1, 0))
-                    RoundedButton(row, text="■", command=lambda n=inst_name: self._on_ld_stop_one(n),
-                                  bg=RED, fg="white", font=("Consolas", 8, "bold"),
-                                  padx=4, pady=0).pack(side="right", padx=(1, 0))
+                        # 单个启动/关闭按钮
+                        inst_name = inst['name']
+                        RoundedButton(row, text="▶", command=lambda n=inst_name: self._on_ld_launch_one(n),
+                                      bg=GREEN, fg="white", font=("Consolas", 8, "bold"),
+                                      padx=4, pady=0).pack(side="right", padx=(1, 0))
+                        RoundedButton(row, text="■", command=lambda n=inst_name: self._on_ld_stop_one(n),
+                                      bg=RED, fg="white", font=("Consolas", 8, "bold"),
+                                      padx=4, pady=0).pack(side="right", padx=(1, 0))
 
-            # >>> MuMu 实例 <<<
-            if mumu_instances:
-                # 分隔
-                tk.Frame(self.inst_rows_frame, bg=BORDER, height=1).pack(fill="x", pady=(4, 2))
-                # 子标题
-                mm_hdr = tk.Frame(self.inst_rows_frame, bg=BG_LIGHT)
-                mm_hdr.pack(fill="x", pady=(0, 2))
-                tk.Label(mm_hdr, text="  MuMu 模拟器", font=self.f_small,
-                         bg=BG_LIGHT, fg=ACCENT).pack(side="left")
-                # 操作按钮
-                RoundedButton(mm_hdr, text="启动全部", command=self._on_mumu_launch_all,
-                              bg=GREEN, fg="white", font=self.f_small, padx=6, pady=1).pack(side="right", padx=(0, 4))
-                RoundedButton(mm_hdr, text="关闭全部", command=self._on_mumu_shutdown_all,
-                              bg=RED, fg="white", font=self.f_small, padx=6, pady=1).pack(side="right", padx=(0, 4))
+                # >>> MuMu 实例 <<<
+                if mumu_instances:
+                    # 分隔
+                    tk.Frame(self.inst_rows_frame, bg=BORDER, height=1).pack(fill="x", pady=(4, 2))
+                    # 子标题
+                    mm_hdr = tk.Frame(self.inst_rows_frame, bg=BG_LIGHT)
+                    mm_hdr.pack(fill="x", pady=(0, 2))
+                    tk.Label(mm_hdr, text="  MuMu 模拟器", font=self.f_small,
+                             bg=BG_LIGHT, fg=ACCENT).pack(side="left")
+                    # 操作按钮
+                    RoundedButton(mm_hdr, text="启动全部", command=self._on_mumu_launch_all,
+                                  bg=GREEN, fg="white", font=self.f_small, padx=6, pady=1).pack(side="right", padx=(0, 4))
+                    RoundedButton(mm_hdr, text="关闭全部", command=self._on_mumu_shutdown_all,
+                                  bg=RED, fg="white", font=self.f_small, padx=6, pady=1).pack(side="right", padx=(0, 4))
 
-                # 诊断按钮
-                RoundedButton(mm_hdr, text="诊断", command=self._mumu_diagnose,
-                              bg=ORANGE_LIGHT, fg="white", font=("Microsoft YaHei", 8),
-                              padx=4, pady=0).pack(side="left", padx=(2, 0))
+                    # 诊断按钮
+                    RoundedButton(mm_hdr, text="诊断", command=self._mumu_diagnose,
+                                  bg=ORANGE_LIGHT, fg="white", font=("Microsoft YaHei", 8),
+                                  padx=4, pady=0).pack(side="left", padx=(2, 0))
 
-                for inst in mumu_instances:
-                    row = tk.Frame(self.inst_rows_frame, bg=CARD)
-                    row.pack(fill="x", pady=1)
+                    for inst in mumu_instances:
+                        row = tk.Frame(self.inst_rows_frame, bg=CARD)
+                        row.pack(fill="x", pady=1)
 
-                    idx = inst['index']
-                    name = inst['name']
-                    running = inst['running']
+                        idx = inst['index']
+                        name = inst['name']
+                        running = inst['running']
 
-                    display_name = f"MuMu-{idx} {name}"
+                        display_name = f"MuMu-{idx} {name}"
 
-                    # 实例信息
-                    cpu = inst.get('cpu', '?')
-                    mem = inst.get('memory', '?')
-                    root = inst.get('root', False)
-                    root_mark = "Y" if root else "N"
-                    try:
-                        mem_int = int(float(mem))
-                        mem_str = f"{mem_int}M"
-                    except (ValueError, TypeError):
-                        mem_str = f"{mem}M"
-                    info_text = f"{cpu}核 {mem_str} Root:{root_mark}"
+                        # 实例信息
+                        cpu = inst.get('cpu', '?')
+                        mem = inst.get('memory', '?')
+                        root = inst.get('root', False)
+                        root_mark = "Y" if root else "N"
+                        try:
+                            mem_int = int(float(mem))
+                            mem_str = f"{mem_int}M"
+                        except (ValueError, TypeError):
+                            mem_str = f"{mem}M"
+                        info_text = f"{cpu}核 {mem_str} Root:{root_mark}"
 
-                    var = tk.BooleanVar(value=inst['name'] in self._auto_launch_instances)
-                    cb = tk.Checkbutton(row, variable=var, bg=CARD,
-                                        activebackground=CARD, selectcolor=CARD, width=4,
-                                        command=self._save_auto_launch_instances)
-                    cb.pack(side="left")
-                    self._inst_vars.append((var, inst))
+                        var = tk.BooleanVar(value=inst['name'] in self._auto_launch_instances)
+                        cb = tk.Checkbutton(row, variable=var, bg=CARD,
+                                            activebackground=CARD, selectcolor=CARD, width=4,
+                                            command=self._save_auto_launch_instances)
+                        cb.pack(side="left")
+                        self._inst_vars.append((var, inst))
 
-                    tk.Label(row, text=display_name, font=("Microsoft YaHei", 9, "bold"),
-                             bg=CARD, fg=TEXT, width=18, anchor="w").pack(side="left")
-                    tk.Label(row, text=info_text, font=("Consolas", 9),
-                             bg=CARD, fg=TEXT_SUB, width=22, anchor="w").pack(side="left")
+                        tk.Label(row, text=display_name, font=("Microsoft YaHei", 9, "bold"),
+                                 bg=CARD, fg=TEXT, width=18, anchor="w").pack(side="left")
+                        tk.Label(row, text=info_text, font=("Consolas", 9),
+                                 bg=CARD, fg=TEXT_SUB, width=22, anchor="w").pack(side="left")
 
-                    status = "运行中" if running else "已停止"
-                    color = GREEN if running else TEXT_LIGHT
-                    tk.Label(row, text=status, font=("Microsoft YaHei", 9),
-                             bg=CARD, fg=color, width=6, anchor="w").pack(side="left")
+                        status = "运行中" if running else "已停止"
+                        color = GREEN if running else TEXT_LIGHT
+                        tk.Label(row, text=status, font=("Microsoft YaHei", 9),
+                                 bg=CARD, fg=color, width=6, anchor="w").pack(side="left")
 
-                    # 单个启动/关闭按钮
-                    RoundedButton(row, text="▶", command=lambda i=idx: self._on_mumu_launch_one(i),
-                                  bg=GREEN, fg="white", font=("Consolas", 8, "bold"),
-                                  padx=4, pady=0).pack(side="right", padx=(1, 0))
-                    RoundedButton(row, text="■", command=lambda i=idx: self._on_mumu_shutdown_one(i),
-                                  bg=RED, fg="white", font=("Consolas", 8, "bold"),
-                                  padx=4, pady=0).pack(side="right", padx=(1, 0))
+                        # 单个启动/关闭按钮
+                        RoundedButton(row, text="▶", command=lambda i=idx: self._on_mumu_launch_one(i),
+                                      bg=GREEN, fg="white", font=("Consolas", 8, "bold"),
+                                      padx=4, pady=0).pack(side="right", padx=(1, 0))
+                        RoundedButton(row, text="■", command=lambda i=idx: self._on_mumu_shutdown_one(i),
+                                      bg=RED, fg="white", font=("Consolas", 8, "bold"),
+                                      padx=4, pady=0).pack(side="right", padx=(1, 0))
 
-            # 更新路径显示 — 状态信息直接看实例列表，不额外显示
-            pass
+                # 更新路径显示 — 状态信息直接看实例列表，不额外显示
+                pass
 
-        self.inst_rows_frame.pack(fill="x")
+            self.inst_rows_frame.pack(fill="x")
 
 
 
-        if not self._startup_launch_done:
-            self.root.after(500, self._auto_launch_on_startup)
+            if not self._startup_launch_done:
+                self.root.after(500, self._auto_launch_on_startup)
+        finally:
+            self._scanning_instances = False
 
     def _get_selected_instances(self):
         """获取勾选的实例名列表"""
