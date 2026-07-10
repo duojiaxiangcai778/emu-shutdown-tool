@@ -1871,7 +1871,8 @@ class EmulatorShutdownApp:
         t["running"] = True; t["target_ts"] = ts
         t["remaining"] = int(ts - time.time())  # 预计算剩余时间，让 update_fn 立刻显示正确倒计时
         _log_info(f"任务启动: id={t.get('id')} 模式={t['mode']} 类型={t.get('type')} target_ts={ts} remaining={t['remaining']}")
-        # 用局部变量捕获回调，避免闭包问题
+        _flush_log()
+                # 用局部变量捕获回调，避免闭包问题
         _tu_fn = time_up_fn
         _upd_fn = update_fn
         t["thread"] = threading.Thread(target=self._make_loop_fn(t, _tu_fn, _upd_fn), daemon=True)
