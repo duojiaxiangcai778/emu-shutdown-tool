@@ -1763,13 +1763,13 @@ def get_mumu_adb_port(index):
     return 16384 + (idx * 32)
 
 
-def check_mumu_adb_connection(index, timeout=10):
+def check_mumu_adb_connection(index, timeout=10, mumu_manager_path=None):
     """
     检查 MuMu 实例是否可以通过 ADB 连接。
     用 adb connect 127.0.0.1:<port> 尝试连接。
     返回: True=连接成功, False=失败或超时
     """
-    adb = _find_adb_path()
+    adb = _find_adb_path(mumu_manager_path)
     if not adb:
         _log_error("[MUMU_ADB] 未找到 adb.exe")
         return False
@@ -1795,13 +1795,13 @@ def check_mumu_adb_connection(index, timeout=10):
         return False
 
 
-def check_mumu_boot_completed(index, timeout=30):
+def check_mumu_boot_completed(index, timeout=30, mumu_manager_path=None):
     """
     检查 MuMu Android 系统是否启动完成。
     通过 ADB 执行 getprop sys.boot_completed，返回 "1" 表示启动完成。
     支持重试直到超时。
     """
-    adb = _find_adb_path()
+    adb = _find_adb_path(mumu_manager_path)
     if not adb:
         _log_error("[MUMU_ADB] 未找到 adb.exe")
         return False
@@ -1861,7 +1861,7 @@ def wait_mumu_ready(mumu_manager_path, index, timeout=180, check_interval=5):
 
     # 第二步: 等待进程和 ADB 就绪
     port = get_mumu_adb_port(index)
-    adb = _find_adb_path()
+    adb = _find_adb_path(mumu_manager_path)
     elapsed = 0.0
     stage = "process_not_found"
 
@@ -1894,27 +1894,27 @@ def wait_mumu_ready(mumu_manager_path, index, timeout=180, check_interval=5):
         stage = "adb_connecting"
 
         # 检查 ADB 连接
-        if adb and check_mumu_adb_connection(index, timeout=5):
+        if adb and check_mumu_adb_connection(index, timeout=5, mumu_manager_path=mumu_manager_path):
             stage = "booting"
 
-            # 检查 boot_completed
-            try:
-                device = f"127.0.0.1:{port}"
-                r = subprocess.run(
-                    [adb, "-s", device, "shell", "getprop", "sys.boot_completed"],
-                    capture_output=True, text=True, timeout=5,
-                    creationflags=subprocess.CREATE_NO_WINDOW,
-                )
-                result = (r.stdout or "").strip()
-                if result == "1":
-                    return {
-                        "success": True,
-                        "message": f"实例 {index} 已就绪",
-                        "elapsed": elapsed,
-                        "stage": "ready",
-                    }
-            except Exception as _e:
-                pass
+        # 检查 boot_completed
+        try:
+            device = f"127.0.0.1:{port}"
+            r = subprocess.run(
+                [adb, "-s", device, "shell", "getprop", "sys.boot_completed"],
+                capture_output=True, text=True, timeout=5,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+            result = (r.stdout or "").strip()
+            if result == "1":
+                return {
+                    "success": True,
+                    "message": f"实例 {index} 已就绪",
+                    "elapsed": elapsed,
+                    "stage": "ready",
+                }
+        except Exception as _e:
+            pass
 
     return {
         "success": False,
@@ -2123,7 +2123,7 @@ def find_emulator_from_shortcuts():
 # MuMu 定时健康巡检
 # ============================================================
 
-def start_mumu_health_monitor(mumu_manager_path, index, check_interval=1200, shutdown_time=None, on_status=None):
+def start_mumu_health_monitor(mumu_manager_path, index, check_interval=1200, shutdown_time=None, on_status=None, on_confirm_restart=None):
     """
     启动 MuMu 实例的定时健康巡检线程。
 
@@ -2133,6 +2133,7 @@ def start_mumu_health_monitor(mumu_manager_path, index, check_interval=1200, shu
         check_interval: 巡检间隔（秒），默认 1200（20 分钟）
         shutdown_time: 可选，计划关机时间戳（time.time()），到达此时间后停止巡检
         on_status: 可选回调函数，接收 (index, healthy, message) 参数
+        on_confirm_restart: 可选回调函数，接收 (index) 参数，返回 True=确认重启，False=跳过
 
     返回: {"thread": threading.Thread, "stop_event": threading.Event}
     """
@@ -2168,7 +2169,7 @@ def start_mumu_health_monitor(mumu_manager_path, index, check_interval=1200, shu
             auto_restart_mumu_on_error()
 
             # 执行健康检查
-            adb_ok = check_mumu_adb_connection(index, timeout=10)
+            adb_ok = check_mumu_adb_connection(index, timeout=10, mumu_manager_path=mumu_manager_path)
             if not adb_ok:
                 # 检查重启上限和冷却时间
                 now = time.time()
@@ -2176,6 +2177,13 @@ def start_mumu_health_monitor(mumu_manager_path, index, check_interval=1200, shu
                     if on_status:
                         on_status(index, False, f"ADB 断连（已重启 {restart_count} 次，跳过本次）")
                     continue
+                # 需要用户确认后才重启
+                if on_confirm_restart is not None:
+                    confirmed = on_confirm_restart(index)
+                    if not confirmed:
+                        if on_status:
+                            on_status(index, False, f"ADB 断连（用户跳过，实例 {index}）")
+                        continue
                 restart_count += 1
                 last_restart_time = now
                 if on_status:
@@ -2194,7 +2202,7 @@ def start_mumu_health_monitor(mumu_manager_path, index, check_interval=1200, shu
                         on_status(index, False, f"重启失败: {launch_result['message']}")
                 continue
 
-            boot_ok = check_mumu_boot_completed(index, timeout=15)
+            boot_ok = check_mumu_boot_completed(index, timeout=15, mumu_manager_path=mumu_manager_path)
             if not boot_ok:
                 # 检查重启上限和冷却时间
                 now = time.time()
