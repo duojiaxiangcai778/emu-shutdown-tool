@@ -4019,7 +4019,7 @@ class EmulatorShutdownApp:
         self._save_tasks_config()
 
     def _confirm_mumu_restart(self, index):
-        """健康检测发现ADB断连时，弹出确认框询问用户是否重启"""
+        """健康检测发现实例失联时，弹出确认框询问用户是否重启"""
         import threading
         from tkinter import messagebox
         result = [False]
@@ -4027,7 +4027,7 @@ class EmulatorShutdownApp:
         def _ask():
             result[0] = messagebox.askyesno(
                 "MuMu 健康检测",
-                f"MuMu 实例 {index} ADB 断连，是否重启该实例？",
+                f"MuMu 实例 {index} 端口无响应，是否重启该实例？",
                 parent=self.root)
             event.set()
         self.root.after(0, _ask)

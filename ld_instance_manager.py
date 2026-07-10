@@ -2123,6 +2123,23 @@ def find_emulator_from_shortcuts():
 # MuMu 定时健康巡检
 # ============================================================
 
+def _check_mumu_port_open(index, timeout=3):
+    """检查 MuMu 实例的 ADB 端口是否已监听（不需要 adb.exe）。
+    用 Python socket 直连 127.0.0.1:<port>，端口开放即认为实例存活。
+    返回: True=端口开放, False=超时或不可达
+    """
+    port = get_mumu_adb_port(index)
+    import socket as _socket
+    try:
+        s = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+        s.settimeout(timeout)
+        result = s.connect_ex(("127.0.0.1", port))
+        s.close()
+        return result == 0
+    except Exception:
+        return False
+
+
 def start_mumu_health_monitor(mumu_manager_path, index, check_interval=1200, shutdown_time=None, on_status=None, on_confirm_restart=None):
     """
     启动 MuMu 实例的定时健康巡检线程。
@@ -2138,6 +2155,32 @@ def start_mumu_health_monitor(mumu_manager_path, index, check_interval=1200, shu
     返回: {"thread": threading.Thread, "stop_event": threading.Event}
     """
     stop_event = threading.Event()
+
+    def _check_process():
+        """检查 MuMu 进程是否存活（通过 wmic 命令行匹配索引号）"""
+        try:
+            r = subprocess.run(
+                ['wmic', 'process', 'where',
+                 "name like '%MuMuPlayer%' or name='MuMuVMMHeadless.exe'",
+                 'get', 'CommandLine'],
+                capture_output=True, text=True, timeout=8,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+            idx_str = str(index)
+            for line in r.stdout.splitlines():
+                if re.search(r'(?<![a-zA-Z0-9])' + re.escape(idx_str) + r'(?![a-zA-Z0-9])', line):
+                    return True
+        except Exception:
+            pass
+        return False
+
+    def _is_instance_alive():
+        """综合判断实例是否存活：端口检测为主，进程检测为辅。"""
+        # 先看端口：不需要 adb.exe，只要端口开放就认为存活
+        if _check_mumu_port_open(index, timeout=3):
+            return True
+        # 端口不通时再看进程（启动初期端口可能还未绑定）
+        return _check_process()
 
     def _monitor_loop():
         # 实例已由调用方启动，这里只做定时巡检
@@ -2168,26 +2211,26 @@ def start_mumu_health_monitor(mumu_manager_path, index, check_interval=1200, shu
             # 自动点击 MuMu 错误弹窗的「重启」按钮
             auto_restart_mumu_on_error()
 
-            # 执行健康检查
-            adb_ok = check_mumu_adb_connection(index, timeout=10, mumu_manager_path=mumu_manager_path)
-            if not adb_ok:
+            # 执行健康检查：端口 + 进程双重判断，不需要 adb.exe
+            alive = _is_instance_alive()
+            if not alive:
                 # 检查重启上限和冷却时间
                 now = time.time()
                 if restart_count >= max_restarts or (last_restart_time > 0 and now - last_restart_time < min_cooldown):
                     if on_status:
-                        on_status(index, False, f"ADB 断连（已重启 {restart_count} 次，跳过本次）")
+                        on_status(index, False, f"实例失联（已重启 {restart_count} 次，跳过本次）")
                     continue
                 # 需要用户确认后才重启
                 if on_confirm_restart is not None:
                     confirmed = on_confirm_restart(index)
                     if not confirmed:
                         if on_status:
-                            on_status(index, False, f"ADB 断连（用户跳过，实例 {index}）")
+                            on_status(index, False, f"实例失联（用户跳过，实例 {index}）")
                         continue
                 restart_count += 1
                 last_restart_time = now
                 if on_status:
-                    on_status(index, False, "ADB 断连，准备重启...")
+                    on_status(index, False, "实例失联，准备重启...")
                 # 关闭后重新启动
                 shutdown_mumu_instance(mumu_manager_path, index)
                 time.sleep(3)
@@ -2200,38 +2243,12 @@ def start_mumu_health_monitor(mumu_manager_path, index, check_interval=1200, shu
                 else:
                     if on_status:
                         on_status(index, False, f"重启失败: {launch_result['message']}")
-                continue
-
-            boot_ok = check_mumu_boot_completed(index, timeout=15, mumu_manager_path=mumu_manager_path)
-            if not boot_ok:
-                # 检查重启上限和冷却时间
-                now = time.time()
-                if restart_count >= max_restarts or (last_restart_time > 0 and now - last_restart_time < min_cooldown):
-                    if on_status:
-                        on_status(index, False, f"boot 丢失（已重启 {restart_count} 次，跳过本次）")
-                    continue
-                restart_count += 1
-                last_restart_time = now
+            else:
+                # 健康
+                restart_count = 0
+                last_restart_time = 0
                 if on_status:
-                    on_status(index, False, "boot_completed 丢失，准备重启...")
-                shutdown_mumu_instance(mumu_manager_path, index)
-                time.sleep(3)
-                launch_result = launch_mumu_with_health_check(mumu_manager_path, index)
-                if launch_result["success"]:
-                    restart_count = 0
-                    last_restart_time = 0
-                    if on_status:
-                        on_status(index, True, f"重启成功（第 {launch_result['retries'] + 1} 次尝试）")
-                else:
-                    if on_status:
-                        on_status(index, False, f"重启失败: {launch_result['message']}")
-                continue
-
-            # 健康
-            restart_count = 0
-            last_restart_time = 0
-            if on_status:
-                on_status(index, True, "巡检正常")
+                    on_status(index, True, "巡检正常")
 
     thread = threading.Thread(target=_monitor_loop, daemon=True, name=f"mumu-health-{index}")
     thread.start()
