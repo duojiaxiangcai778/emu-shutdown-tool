@@ -38,7 +38,6 @@ from ld_instance_manager import (
     get_emulator_environment_report,
     get_instance_summary,
     launch_instance,
-    launch_mumu_with_health_check,
     list_snapshots,
     load_tool_config,
     restore_snapshot,
@@ -1247,13 +1246,8 @@ class EmulatorShutdownApp:
             self._load_tasks_config()
             self._config_loaded = True
             cfg = load_tool_config()
-            self._mumu_health_check_enabled = cfg.get("mumu_health_check", False)
-            self._mumu_health_interval = cfg.get("mumu_health_interval", 20)
-            self._mumu_health_var = tk.BooleanVar(value=self._mumu_health_check_enabled)
             self._log_refresh_id = None
-            self._mumu_monitors = {}
-            self._mumu_lock = threading.Lock()
-            _log_info(f"配置加载完成：关闭任务 {len(self.shutdown_tasks)} 个，启动任务 {len(self.launch_tasks)} 个，健康检测={'开' if self._mumu_health_check_enabled else '关'}")
+            _log_info(f"配置加载完成：关闭任务 {len(self.shutdown_tasks)} 个，启动任务 {len(self.launch_tasks)} 个")
 
             # 开机自动恢复最新快照（后台线程，不阻塞主线程）
             def _bg_restore():
@@ -1913,14 +1907,7 @@ class EmulatorShutdownApp:
             task["vars"]["act_btn"].config_bg(color)
             task["vars"]["act_btn"].set_text("▶")
             task["vars"]["st_lbl"].config(text="已禁用", fg=TEXT_LIGHT)
-        # 禁用时停止 MuMu 健康巡检（清全局 monitors）
-        if not task["enabled"] and task.get("type") == "launch":
-            from ld_instance_manager import stop_mumu_health_monitor
-            with self._mumu_lock:
-                monitors = dict(self._mumu_monitors)
-                self._mumu_monitors.clear()
-            for m in monitors.values():
-                stop_mumu_health_monitor(m)
+
         self._save_tasks_config()
 
     def _stop_all_generic(self, tasks_list, color):
@@ -1936,13 +1923,7 @@ class EmulatorShutdownApp:
                 t["vars"]["act_btn"].config_bg(color)
                 t["vars"]["act_btn"].set_text("▶")
                 t["vars"]["st_lbl"].config(text="已停止", fg=TEXT_LIGHT)
-        # 停止所有 MuMu 健康巡检（使用全局字典，不是 task 级空字典）
-        from ld_instance_manager import stop_mumu_health_monitor
-        with self._mumu_lock:
-            monitors = dict(self._mumu_monitors)
-            self._mumu_monitors.clear()
-        for m in monitors.values():
-            stop_mumu_health_monitor(m)
+
         self._save_tasks_config()
 
     # ---------- 任务组件（使用共享逻辑） ----------
@@ -1983,14 +1964,7 @@ class EmulatorShutdownApp:
             t["vars"]["act_btn"].set_text("…")
             t["vars"]["st_lbl"].config(text="执行中...", fg=YELLOW)
             self._save_tasks_config()
-            # 停止所有 MuMu 健康巡检，防止关闭后自动重启跟关闭任务冲突
-            from ld_instance_manager import stop_mumu_health_monitor
-            with self._mumu_lock:
-                _mons = list(self._mumu_monitors.items())
-                self._mumu_monitors.clear()
-            for _, _m in _mons:
-                stop_mumu_health_monitor(_m)
-                _log_info("关闭任务: 已停止 MuMu 健康巡检")
+
             should_shutdown = self.shutdown_var.get()
             _log_info(f"定时执行: should_shutdown={should_shutdown}")
             def _on_done(count, success, fail_count, failed_names, _, shutdown_executed):
@@ -2200,21 +2174,14 @@ class EmulatorShutdownApp:
 
                     # MuMu
                     if mumu_keys and mumu_path:
-                        from ld_instance_manager import launch_mumu_instance, start_mumu_health_monitor
+                        from ld_instance_manager import launch_mumu_instance
                         for k in mumu_keys:
                             idx = int(k.replace("mumu_", ""))
                             try:
                                 succ_mu, _ = launch_mumu_instance(mumu_path, idx)
                                 if succ_mu:
                                     ok += 1
-                                    # 启动成功后开启健康巡检
-                                    if self._mumu_health_check_enabled:
-                                        monitor = start_mumu_health_monitor(
-                                            idx,
-                                            check_interval=self._mumu_health_interval * 60)
-                                        with self._mumu_lock:
-                                            self._mumu_monitors[idx] = monitor
-                                        _log_info(f"_time_up MuMu {idx} 健康巡检已启动")
+
                                 time.sleep(_interval)
                             except Exception as _e_mu:
                                 _log_error(f"_time_up _work: MuMu {idx} 启动失败: {_e_mu}")
@@ -2259,16 +2226,7 @@ class EmulatorShutdownApp:
         def _delete():
             if task["running"]:
                 _stop()
-            # 停止该任务关联的 MuMu 健康巡检（用全局字典，不是 task 级空字典）
-            from ld_instance_manager import stop_mumu_health_monitor
-            with self._mumu_lock:
-                for k in list(self._mumu_monitors.keys()):
-                    mumu_key = f"mumu_{k}"
-                    if mumu_key in task.get("instances", []):
-                        m = self._mumu_monitors.pop(k, None)
-                        if m:
-                            stop_mumu_health_monitor(m)
-            task["_mumu_monitors"] = {}
+
             task["frame"].destroy()
             for i, t in enumerate(self.launch_tasks):
                 if t["id"] == task_id:
@@ -2464,21 +2422,14 @@ class EmulatorShutdownApp:
                 # MuMu
                 if mumu_keys and mumu_path:
                     self._mumu_path = mumu_path
-                    from ld_instance_manager import launch_mumu_instance, start_mumu_health_monitor
+                    from ld_instance_manager import launch_mumu_instance
                     for k in mumu_keys:
                         idx = int(k.replace("mumu_", ""))
                         try:
                             ok, msg = launch_mumu_instance(mumu_path, idx)
                             if ok:
                                 succ += 1
-                                # 测试启动也挂上健康巡检（任何启动方式都应有检测）
-                                if self._mumu_health_check_enabled:
-                                    monitor = start_mumu_health_monitor(
-                                        idx,
-                                        check_interval=self._mumu_health_interval * 60)
-                                    with self._mumu_lock:
-                                        self._mumu_monitors[idx] = monitor
-                                    _log_info(f"5s测试 MuMu {idx} 健康巡检已启动")
+
                             time.sleep(3)
                         except Exception as e:
                             _log_error(f"测试启动 MuMu {idx}: {e}")
@@ -2638,8 +2589,7 @@ class EmulatorShutdownApp:
             config["shutdown_always"] = self.shutdown_var.get()
             config["restart_always"] = self.restart_var.get()
             _log_info(f"_save_tasks_config: 关闭={len(shutdown_data)}个 启动={len(launch_data)}个")
-            config["mumu_health_check"] = self._mumu_health_check_enabled
-            config["mumu_health_interval"] = self._mumu_health_interval
+
             # 保护：保存时确保 paths 不被擦除（按钮路径用 self._ld_paths，定时器读 config）
             if self._ld_paths:
                 config.setdefault("paths", {})
@@ -3039,28 +2989,7 @@ class EmulatorShutdownApp:
                               bg=GREEN, fg="white", font=self.f_small, padx=6, pady=1).pack(side="right", padx=(0, 4))
                 RoundedButton(mm_hdr, text="关闭全部", command=self._on_mumu_shutdown_all,
                               bg=RED, fg="white", font=self.f_small, padx=6, pady=1).pack(side="right", padx=(0, 4))
-                # 健康检测开关 + 间隔
-                self._mumu_health_var = tk.BooleanVar(value=self._mumu_health_check_enabled)
-                tk.Checkbutton(mm_hdr, text="健康检测", variable=self._mumu_health_var,
-                               font=("Microsoft YaHei", 8), bg=BG_LIGHT, fg=TEXT_SUB,
-                               selectcolor=CARD, activebackground=BG_LIGHT,
-                               command=self._save_mumu_health_setting).pack(side="left", padx=(8, 0))
-                tk.Label(mm_hdr, text="间隔", font=("Microsoft YaHei", 7),
-                         bg=BG_LIGHT, fg=TEXT_LIGHT).pack(side="left", padx=(0, 1))
-                self._mumu_health_interval_var = tk.StringVar(value=str(self._mumu_health_interval))
-                iv = ttk.Spinbox(mm_hdr, from_=1, to=120, width=3,
-                                 font=("Consolas", 8), textvariable=self._mumu_health_interval_var,
-                                 command=self._save_mumu_health_setting)
-                iv.pack(side="left", padx=(0, 1))
-                # 手动输入后失去焦点也保存
-                iv.bind("<FocusOut>", lambda e: self._save_mumu_health_setting())
-                iv.bind("<Return>", lambda e: self._save_mumu_health_setting())
-                # 取消 Spinbox 默认绑定防止触发 _on_mw
-                iv.unbind("<MouseWheel>")
-                iv.unbind("<Button-4>")
-                iv.unbind("<Button-5>")
-                tk.Label(mm_hdr, text="分钟", font=("Microsoft YaHei", 7),
-                         bg=BG_LIGHT, fg=TEXT_LIGHT).pack(side="left", padx=(0, 4))
+
                 # 诊断按钮
                 RoundedButton(mm_hdr, text="诊断", command=self._mumu_diagnose,
                               bg=ORANGE_LIGHT, fg="white", font=("Microsoft YaHei", 8),
@@ -3118,9 +3047,7 @@ class EmulatorShutdownApp:
 
         self.inst_rows_frame.pack(fill="x")
 
-        # 给已经运行的 MuMu 实例自动挂上健康检测
-        if self._mumu_health_check_enabled and self._mumu_instances:
-            self._start_health_monitors_for_running()
+
 
         if not self._startup_launch_done:
             self.root.after(500, self._auto_launch_on_startup)
@@ -3220,7 +3147,7 @@ class EmulatorShutdownApp:
 
             # ---- MuMu 自启动 ----
             if selected_mumu:
-                from ld_instance_manager import launch_mumu_instance, start_mumu_health_monitor
+                from ld_instance_manager import launch_mumu_instance
                 self.root.after(0, lambda: self.launch_status_var.set(f"正在启动 {len(selected_mumu)} 个 MuMu 实例..."))
                 ok = 0
                 for name in selected_mumu:
@@ -3230,14 +3157,7 @@ class EmulatorShutdownApp:
                             result = launch_mumu_instance(self._mumu_path, idx)
                             if result:
                                 ok += 1
-                                # 启动成功后开启健康巡检
-                                if self._mumu_health_check_enabled:
-                                    monitor = start_mumu_health_monitor(
-                                        idx,
-                                        check_interval=self._mumu_health_interval * 60)
-                                    with self._mumu_lock:
-                                        self._mumu_monitors[idx] = monitor
-                                    _log_info(f"自启动 MuMu {idx} 健康巡检已启动")
+
                             break
                     time.sleep(interval)
                 self.root.after(0, lambda: self.launch_status_var.set(f"MuMu 自启动完成 {ok}/{len(selected_mumu)}"))
@@ -3994,51 +3914,7 @@ class EmulatorShutdownApp:
         self.launch_status_var.set(f"完成 {success}/{total}")
         self._scan_and_display_instances()
 
-    def _save_mumu_health_setting(self):
-        """保存健康检测开关状态"""
-        old = self._mumu_health_check_enabled
-        self._mumu_health_check_enabled = self._mumu_health_var.get()
-        # 读取间隔
-        try:
-            self._mumu_health_interval = int(self._mumu_health_interval_var.get())
-            if self._mumu_health_interval < 1:
-                self._mumu_health_interval = 1
-        except (ValueError, TypeError):
-            self._mumu_health_interval = 20
-        # 关闭健康检测时停止所有巡检
-        if old and not self._mumu_health_check_enabled:
-            from ld_instance_manager import stop_mumu_health_monitor
-            for idx, mon in list(self._mumu_monitors.items()):
-                stop_mumu_health_monitor(mon)
-                del self._mumu_monitors[idx]
-            _log_info("已停止所有 MuMu 定时巡检")
-        _log_info(f"MuMu健康检测: {'开' if self._mumu_health_check_enabled else '关'}, 间隔={self._mumu_health_interval}分钟")
-        self._save_tasks_config()
 
-    def _start_health_monitors_for_running(self):
-        """给所有已运行的 MuMu 实例挂上健康检测线程"""
-        if not self._mumu_health_check_enabled or not self._mumu_instances:
-            return
-        from ld_instance_manager import start_mumu_health_monitor
-        started = 0
-        for inst in self._mumu_instances:
-            idx = inst.get("index")
-            if not idx:
-                continue
-            if not inst.get("running", False):
-                continue
-            # 已经挂了的跳过
-            if idx in self._mumu_monitors:
-                continue
-            monitor = start_mumu_health_monitor(
-                idx,
-                check_interval=self._mumu_health_interval * 60)
-            with self._mumu_lock:
-                self._mumu_monitors[idx] = monitor
-            started += 1
-            _log_info(f"MuMu {idx} 开机健康巡检已启动（每{self._mumu_health_interval}分钟）")
-        if started:
-            _log_info(f"已为 {started} 个运行中的 MuMu 实例挂上健康检测")
 
     def _mumu_diagnose(self):
         """MuMu 诊断：扫描弹窗 + ADB 状态，输出到日志和 toast"""
@@ -4171,24 +4047,9 @@ class EmulatorShutdownApp:
     def _on_mumu_launch_one(self, index):
         """启动单个 MuMu 实例"""
         def _work():
-            if self._mumu_health_check_enabled:
-                result = launch_mumu_with_health_check(self._mumu_path, index)
-                msg = result["message"]
-                if result["success"]:
-                    # 启动成功后开启定时巡检（每20分钟）
-                    from ld_instance_manager import start_mumu_health_monitor
-                    monitor = start_mumu_health_monitor(
-                        index,
-                        check_interval=self._mumu_health_interval * 60)
-                    with self._mumu_lock:
-                        self._mumu_monitors[index] = monitor
-                    _log_info(f"MuMu {index} 定时巡检已启动（每{self._mumu_health_interval}分钟）")
-                else:
-                    _log_info(f"MuMu {index} 启动失败: {msg}")
-            else:
-                from ld_instance_manager import launch_mumu_instance
-                ok, msg = launch_mumu_instance(self._mumu_path, index)
-                result = {"success": ok, "message": msg}
+            from ld_instance_manager import launch_mumu_instance
+            ok, msg = launch_mumu_instance(self._mumu_path, index)
+            result = {"success": ok, "message": msg}
             self.root.after(0, lambda: self._toast(
                 "启动结果" if result["success"] else "启动失败", result["message"]))
             self.root.after(500, self._scan_and_display_instances)
@@ -4197,12 +4058,7 @@ class EmulatorShutdownApp:
     def _on_mumu_shutdown_one(self, index):
         """关闭单个 MuMu 实例"""
         def _work():
-            # 先停止监测线程，防止自动重启
-            from ld_instance_manager import stop_mumu_health_monitor
-            with self._mumu_lock:
-                mon = self._mumu_monitors.pop(index, None)
-            if mon:
-                stop_mumu_health_monitor(mon)
+
             ok, msg = shutdown_mumu_instance(self._mumu_path, index)
             self.root.after(0, lambda succ=ok, m=msg: self._toast(
                 "关闭结果" if succ else "关闭失败", m, 4000))
@@ -4219,25 +4075,11 @@ class EmulatorShutdownApp:
         threads = []
 
         def _launch_one(idx):
-            if self._mumu_health_check_enabled:
-                result = launch_mumu_with_health_check(self._mumu_path, idx)
-                if result["success"]:
-                    with success_lock:
-                        success[0] += 1
-                    from ld_instance_manager import start_mumu_health_monitor
-                    monitor = start_mumu_health_monitor(idx,
-                                                        check_interval=self._mumu_health_interval * 60)
-                    with self._mumu_lock:
-                        self._mumu_monitors[idx] = monitor
-                    _log_info(f"MuMu {idx} 定时巡检已启动（每{self._mumu_health_interval}分钟）")
-                else:
-                    _log_info(f"MuMu {idx} 启动失败: {result['message']}")
-            else:
-                from ld_instance_manager import launch_mumu_instance
-                ok, msg = launch_mumu_instance(self._mumu_path, idx)
-                if ok:
-                    with success_lock:
-                        success[0] += 1
+                    from ld_instance_manager import launch_mumu_instance
+                    r_ok, r_msg = launch_mumu_instance(self._mumu_path, idx)
+                    if r_ok:
+                        with success_lock:
+                            success[0] += 1
 
         def _work():
             for inst in self._mumu_instances:
@@ -4261,13 +4103,7 @@ class EmulatorShutdownApp:
         if not self._mumu_instances:
             return
         def _work():
-            # 先停止所有监测线程，防止自动重启
-            from ld_instance_manager import stop_mumu_health_monitor
-            with self._mumu_lock:
-                monitors = list(self._mumu_monitors.items())
-                self._mumu_monitors.clear()
-            for _, mon in monitors:
-                stop_mumu_health_monitor(mon)
+
             total = len(self._mumu_instances)
             success = 0
             for inst in self._mumu_instances:
@@ -4394,11 +4230,7 @@ class EmulatorShutdownApp:
                 return
         # 保存当前配置和所有勾选状态
         self._save_tasks_config()
-        # 停止所有 MuMu 定时巡检
-        from ld_instance_manager import stop_mumu_health_monitor
-        for _, mon in list(self._mumu_monitors.items()):
-            stop_mumu_health_monitor(mon)
-        self._mumu_monitors.clear()
+
         self._destroyed = True
         for t in self.shutdown_tasks:
             t["running"] = False

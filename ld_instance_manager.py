@@ -1924,87 +1924,7 @@ def wait_mumu_ready(mumu_manager_path, index, timeout=180, check_interval=5):
     }
 
 
-def launch_mumu_with_health_check(mumu_manager_path, index, max_retries=3, timeout=180):
-    """
-    带健康检测的 MuMu 启动。
-    - 调用 launch_mumu_instance 启动
-    - 调用 wait_mumu_ready 等待就绪
-    - 如果超时或失败，自动关闭实例并重试（最多 max_retries 次）
-    - 每次重试递增 timeout
-    返回: {"success": bool, "message": str, "retries": int}
-    """
-    last_result = None
-    current_timeout = timeout
 
-    for attempt in range(max_retries + 1):
-        _log_info(f"[MUMU_HEALTH] 实例 {index} 第 {attempt + 1} 次启动尝试 (timeout={current_timeout}s)")
-
-        last_result = wait_mumu_ready(mumu_manager_path, index, timeout=current_timeout, check_interval=5)
-
-        if last_result["success"]:
-            msg = f"实例 {index} 启动成功"
-            if attempt > 0:
-                msg += f"（第 {attempt + 1} 次尝试成功）"
-            return {
-                "success": True,
-                "message": msg,
-                "retries": attempt,
-            }
-
-        # 启动失败，关闭实例再重试
-        _log_info(f"[MUMU_HEALTH] 实例 {index} 启动失败: {last_result['message']}，准备重试")
-        try:
-            shutdown_mumu_instance(mumu_manager_path, index)
-            time.sleep(3)
-        except Exception as e:
-            _log_error(f"[MUMU_HEALTH] 关闭实例 {index} 失败: {e}")
-
-        # 递增超时时间
-        current_timeout = int(current_timeout * 1.5)
-        time.sleep(2)
-
-    return {
-        "success": False,
-        "message": f"实例 {index} 启动失败（已重试 {max_retries} 次）: {last_result['message'] if last_result else '未知错误'}",
-        "retries": max_retries,
-    }
-
-
-def check_all_mumu_instances_health(mumu_manager_path, instances):
-    """
-    批量检查所有 MuMu 实例健康状态。
-    对每个实例检测 ADB 连通性和 boot_completed。
-    如果实例标记为运行中但 ADB 不可达，报告异常。
-    返回: [{"index": str, "name": str, "running": bool,
-             "adb_connected": bool, "boot_completed": bool, "healthy": bool}, ...]
-    """
-    results = []
-
-    for inst in instances:
-        idx = inst.get("index", "0")
-        name = inst.get("name", f"MuMu-{idx}")
-        running = inst.get("running", False)
-
-        adb_connected = False
-        boot_completed = False
-
-        if running:
-            adb_connected = check_mumu_adb_connection(idx, timeout=5)
-            if adb_connected:
-                boot_completed = check_mumu_boot_completed(idx, timeout=5)
-
-        healthy = running and adb_connected and boot_completed
-
-        results.append({
-            "index": idx,
-            "name": name,
-            "running": running,
-            "adb_connected": adb_connected,
-            "boot_completed": boot_completed,
-            "healthy": healthy,
-        })
-
-    return results
 
 
 # ============================================================
@@ -2120,59 +2040,7 @@ def find_emulator_from_shortcuts():
 
 
 # ============================================================
-# MuMu 定时健康巡检
-# ============================================================
 
-def start_mumu_health_monitor(index, check_interval=1200, on_status=None):
-    """
-    启动 MuMu 实例的定时健康巡检线程。
-    唯一功能：定期扫描 Windows 窗口，发现 MuMu 错误弹窗则自动点击「重启」按钮。
-
-    参数:
-        index: 实例索引
-        check_interval: 巡检间隔（秒），默认 1200（20 分钟）
-        on_status: 可选回调函数，接收 (index, healthy, message) 参数
-
-    返回: {"thread": threading.Thread, "stop_event": threading.Event}
-    """
-    stop_event = threading.Event()
-
-    def _monitor_loop():
-        if on_status:
-            on_status(index, True, "开始定时巡检")
-        while not stop_event.is_set():
-            # 等待一个巡检周期
-            for _ in range(check_interval):
-                if stop_event.is_set():
-                    return
-                time.sleep(1)
-            # 扫描 MuMu 弹窗，发现「重启」按钮自动点击
-            clicked = auto_restart_mumu_on_error()
-            if on_status:
-                if clicked:
-                    on_status(index, True, f"已点击 {clicked} 个重启按钮")
-                else:
-                    on_status(index, True, "巡检正常")
-
-    thread = threading.Thread(target=_monitor_loop, daemon=True, name=f"mumu-health-{index}")
-    thread.start()
-
-    return {"thread": thread, "stop_event": stop_event}
-
-
-def stop_mumu_health_monitor(monitor):
-    """
-    停止健康巡检线程。
-    设置 stop_event 并等待线程结束（超时 5 秒）。
-    """
-    if not monitor:
-        return
-    stop_event = monitor.get("stop_event")
-    thread = monitor.get("thread")
-    if stop_event:
-        stop_event.set()
-    if thread and thread.is_alive():
-        thread.join(timeout=360)  # 等待最多 6 分钟（健康检测可能有长时间阻塞）
 
 
 def _find_mumu_error_dialog():
