@@ -1799,7 +1799,8 @@ class EmulatorShutdownApp:
                 while t["running"]:
                     rem = int(t["target_ts"] - time.time())
                     if rem <= 0:
-                        _log_info(f"计时器到期: id={t.get('id')} type={t.get('type')}")
+                        _log_info(f"计时器到期: id={t.get('id')} type={t.get('type')} target_ts={t.get('target_ts')}")
+                        _flush_log()
                         self.root.after(0, lambda: time_up_fn(t)); break
                     t["remaining"] = rem
                     if not t.get("_pending_update"):
@@ -1808,9 +1809,9 @@ class EmulatorShutdownApp:
                     time.sleep(0.5)
             except Exception as _e:
                 _log_error(f"定时器循环异常 id={t.get('id')}", _e)
+                _flush_log()
                 t["running"] = False
         return _loop
-
     def _start_task(self, t, color, time_up_fn, update_fn):
         """启动任务（通用逻辑）"""
         if t["running"] or not t["enabled"]:
@@ -2243,6 +2244,7 @@ class EmulatorShutdownApp:
                     self.root.after(0, _ui)
                 except Exception as _e_w:
                     _log_error(f"_time_up _work 异常: {_e_w}")
+                    _flush_log()
                     self.root.after(0, lambda: t["vars"]["st_lbl"].config(text="启动异常", fg=RED))
                     self.root.after(0, lambda: t.__setitem__("_executing", False))
 
