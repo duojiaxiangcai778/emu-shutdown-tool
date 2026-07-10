@@ -25,7 +25,12 @@ from datetime import datetime
 # 路径自动探测
 # ============================================================
 
-def auto_detect_paths():
+# 自动探测结果缓存（模块级），避免重复全盘扫描
+_AUTO_DETECT_CACHE = None
+_AUTO_DETECT_CACHE_TIME = 0.0
+_AUTO_DETECT_CACHE_TTL = 300
+
+def auto_detect_paths(force=False):
     """
     自动探测 LDPlayer 安装路径和多开器路径
     返回: {
@@ -36,7 +41,13 @@ def auto_detect_paths():
         "dnmultiplayerex": "D:\\E\\ldmutiplayer\\dnmultiplayerex.exe",
     }
     """
+    global _AUTO_DETECT_CACHE, _AUTO_DETECT_CACHE_TIME
+    now = time.time()
+    if not force and _AUTO_DETECT_CACHE is not None and (now - _AUTO_DETECT_CACHE_TIME) < _AUTO_DETECT_CACHE_TTL:
+        return dict(_AUTO_DETECT_CACHE)
+
     result = {
+        "ld_path": None,
         "ld_path": None,
         "multiplayer_path": None,
         "vms_config_dir": None,
@@ -111,6 +122,8 @@ def auto_detect_paths():
     if mumu_info.get("manager_path"):
         result["mumu_manager_path"] = mumu_info["manager_path"]
 
+    _AUTO_DETECT_CACHE = result
+    _AUTO_DETECT_CACHE_TIME = time.time()
     return result
 
 

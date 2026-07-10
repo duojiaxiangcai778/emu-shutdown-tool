@@ -2183,13 +2183,15 @@ class EmulatorShutdownApp:
                     total = len(instances)
                     ok = 0
 
-                    # LDPlayer
+                    # 读取启动间隔（LD 和 MuMu 共用）
+                    _interval = 5
+                    try:
+                        _interval = int(self.launch_interval_var.get())
+                    except (ValueError, TypeError):
+                        pass
+
+# LDPlayer
                     if ld_names:
-                        _interval = 5
-                        try:
-                            _interval = int(self.launch_interval_var.get())
-                        except (ValueError, TypeError):
-                            pass
                         results = staggered_launch(
                             dnconsole, ld_names, interval_seconds=_interval,
                             on_status=lambda s: self.root.after(0, lambda: t["vars"]["st_lbl"].config(text=s[:30], fg=YELLOW)),
@@ -2213,7 +2215,7 @@ class EmulatorShutdownApp:
                                         with self._mumu_lock:
                                             self._mumu_monitors[idx] = monitor
                                         _log_info(f"_time_up MuMu {idx} 健康巡检已启动")
-                                time.sleep(5)
+                                time.sleep(_interval)
                             except Exception as _e_mu:
                                 _log_error(f"_time_up _work: MuMu {idx} 启动失败: {_e_mu}")
 
@@ -2590,11 +2592,19 @@ class EmulatorShutdownApp:
             shutdown_data = []
             for t in self.shutdown_tasks:
                 try:
+                    try:
+                        hour = int(float(t["vars"]["h_spin"].get()))
+                        minute = int(float(t["vars"]["m_spin"].get()))
+                        cd = int(float(t["vars"]["cd_spin"].get()))
+                    except Exception:
+                        hour = t.get("hour", 0)
+                        minute = t.get("minute", 0)
+                        cd = t.get("cd_min", 30)
                     shutdown_data.append({
                         "mode": t["mode"],
-                        "hour": int(float(t["vars"]["h_spin"].get())),
-                        "minute": int(float(t["vars"]["m_spin"].get())),
-                        "countdown_min": int(float(t["vars"]["cd_spin"].get())),
+                        "hour": hour,
+                        "minute": minute,
+                        "countdown_min": cd,
                         "enabled": t["en_var"].get(),
                     })
                 except Exception as e:
@@ -2602,11 +2612,19 @@ class EmulatorShutdownApp:
             launch_data = []
             for t in self.launch_tasks:
                 try:
+                    try:
+                        hour = int(float(t["vars"]["h_spin"].get()))
+                        minute = int(float(t["vars"]["m_spin"].get()))
+                        cd = int(float(t["vars"]["cd_spin"].get()))
+                    except Exception:
+                        hour = t.get("hour", 8)
+                        minute = t.get("minute", 0)
+                        cd = t.get("cd_min", 30)
                     launch_data.append({
                         "mode": t["mode"],
-                        "hour": int(float(t["vars"]["h_spin"].get())),
-                        "minute": int(float(t["vars"]["m_spin"].get())),
-                        "countdown_min": int(float(t["vars"]["cd_spin"].get())),
+                        "hour": hour,
+                        "minute": minute,
+                        "countdown_min": cd,
                         "enabled": t["en_var"].get(),
                         "instances": list(t.get("instances", [])),
                     })
