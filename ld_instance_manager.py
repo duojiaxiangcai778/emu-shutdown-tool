@@ -106,6 +106,11 @@ def auto_detect_paths():
                         result["vms_config_dir"] = vms_cfg
                         break
 
+    # 补充 MuMu 路径检测（跨电脑兼容）
+    mumu_info = auto_detect_mumu()
+    if mumu_info.get("manager_path"):
+        result["mumu_manager_path"] = mumu_info["manager_path"]
+
     return result
 
 

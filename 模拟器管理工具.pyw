@@ -1267,15 +1267,6 @@ class EmulatorShutdownApp:
                     vms = self._ld_paths.get("vms_config_dir")
                     mp = self._ld_paths.get("multiplayer_path")
                     if not vms or not mp:
-                        _cfg = self._find_config_file()
-                        if _cfg:
-                            with open(_cfg, 'r', encoding='utf-8') as _f:
-                                _saved = json.load(_f)
-                            if not vms:
-                                vms = _saved.get("paths", {}).get("vms_config_dir")
-                            if not mp:
-                                mp = _saved.get("paths", {}).get("multiplayer_path")
-                    if not vms or not mp:
                         from ld_instance_manager import auto_detect_paths
                         detected = auto_detect_paths()
                         if not vms and detected.get("vms_config_dir"):
@@ -2145,35 +2136,19 @@ class EmulatorShutdownApp:
             t["vars"]["st_lbl"].config(text="启动中...", fg=YELLOW)
             self._save_tasks_config()
 
-            # 读路径：优先用 self._ld_paths（跟全部启动按钮一样），缺少时自动探测
+            # 读路径：自动检测（不依赖配置文件，跨电脑可用）
             dnconsole = self._ld_paths.get("dnconsole") if self._ld_paths else None
             mumu_path = self._mumu_path
             if not dnconsole or not os.path.isfile(dnconsole):
-                # self._ld_paths 没有 → 读配置文件
-                cfg = load_tool_config()
-                dnconsole = cfg.get("paths", {}).get("dnconsole", "")
-                mumu_path = cfg.get("mumu_manager_path", "") or mumu_path
-                if not dnconsole or not os.path.isfile(dnconsole):
-                    ld_path = cfg.get("paths", {}).get("ld_path", "")
-                    if ld_path:
-                        dnconsole = _find_ldconsole(ld_path)
-                if not dnconsole or not os.path.isfile(dnconsole):
-                    # 还没有 → 自动探测（全盘搜索）
-                    from ld_instance_manager import auto_detect_paths
-                    _detected = auto_detect_paths()
-                    dnconsole = _detected.get("dnconsole", "") or dnconsole
-                    if not mumu_path or not os.path.isfile(mumu_path):
-                        mumu_path = _detected.get("mumu_manager_path", "")
-                    # 额外搜 MuMuManager（auto_detect 不搜 MuMu）
-                    if not mumu_path or not os.path.isfile(mumu_path):
-                        for _try in [
-                            r"D:\E\MuMu Player 12\nx_main\MuMuManager.exe",
-                            r"C:\Program Files\Netease\MuMu\nx_main\MuMuManager.exe",
-                        ]:
-                            if os.path.isfile(_try):
-                                mumu_path = _try
-                                _log_info(f"_time_up: 额外搜到 MuMu {mumu_path}")
-                                break
+                from ld_instance_manager import auto_detect_paths, auto_detect_mumu
+                _detected = auto_detect_paths()
+                dnconsole = _detected.get("dnconsole", "") or dnconsole
+                if not mumu_path or not os.path.isfile(mumu_path):
+                    mumu_path = _detected.get("mumu_manager_path", "")
+                if not mumu_path or not os.path.isfile(mumu_path):
+                    info = auto_detect_mumu()
+                    if info.get("manager_path"):
+                        mumu_path = info["manager_path"]
                     _log_info(f"_time_up: 自动探测 dnconsole={dnconsole}, mumu_path={mumu_path}")
             if dnconsole and os.path.isfile(dnconsole):
                 self._ld_paths["dnconsole"] = dnconsole
@@ -2723,14 +2698,9 @@ class EmulatorShutdownApp:
             threading.Thread(target=_work, daemon=True).start()
 
     def _save_all_paths(self):
-        """保存 LDPlayer 和 MuMu 路径到配置（合并而非覆盖）"""
-        config = load_tool_config()
-        config.setdefault("paths", {})
-        if self._ld_paths:
-            config["paths"].update(self._ld_paths)
-        if self._mumu_path:
-            config["mumu_manager_path"] = self._mumu_path
-        save_tool_config(config)
+        """保存 LDPlayer 和 MuMu 路径到内存（不写入配置文件，跨电脑可用）"""
+        # 路径仅在内存中，不写入 config JSON
+        _log_info(f"路径已保存到内存: LDPlayer路径={bool(self._ld_paths)}, MuMu路径={bool(self._mumu_path)}")
 
     def _validate_ld_path(self, raw_path):
         """验证并保存 LDPlayer 路径"""
@@ -2921,35 +2891,21 @@ class EmulatorShutdownApp:
         """扫描并同时显示 LDPlayer + MuMu 实例"""
         # ---- 扫描 LDPlayer 实例 ----
         vms_cfg = self._ld_paths.get("vms_config_dir")
-        # 从配置文件读 vms_cfg（搜索多个可能的位置）
-        if not vms_cfg:
-            _cfg_path = self._find_config_file()
-            if _cfg_path:
-                try:
-                    with open(_cfg_path, 'r', encoding='utf-8') as _f:
-                        _saved = json.load(_f)
-                    vms_cfg = _saved.get("paths", {}).get("vms_config_dir")
-                    if not self._mumu_path:
-                        self._mumu_path = _saved.get("mumu_manager_path", "")
-                except Exception as _e:
-                    pass
-            # 配置文件也没有 → 先尝试已知路径兜底
-            if not vms_cfg:
-                for _p in [r"D:\E\LDPlayer9\vms\config", r"D:\E\LDPlayer9\vms"]:
-                    if os.path.isdir(_p):
-                        vms_cfg = _p
-                        self._ld_paths.setdefault("vms_config_dir", vms_cfg)
-                        _log_info(f"[SCAN] 兜底路径: {vms_cfg}")
-                        break
+        # 自动检测路径（不依赖配置文件中的绝对路径，跨电脑可用）
+        if not vms_cfg or not self._mumu_path:
+            from ld_instance_manager import auto_detect_paths
+            detected = auto_detect_paths()
+            if not vms_cfg and detected.get("vms_config_dir"):
+                vms_cfg = detected["vms_config_dir"]
+                self._ld_paths.setdefault("vms_config_dir", vms_cfg)
+                _log_info(f"[SCAN] 自动检测 LDPlayer vms: {vms_cfg}")
             if not self._mumu_path:
-                for _p in [r"D:\E\MuMu Player 12\nx_main\MuMuManager.exe",
-                           r"D:\E\MuMu Player 12\MuMuManager.exe",
-                           r"C:\Program Files\Netease\MuMu\nx_main\MuMuManager.exe"]:
-                    if os.path.isfile(_p):
-                        self._mumu_path = _p
-                        _log_info(f"[SCAN] MuMu兜底: {self._mumu_path}")
-                        break
-            # 还找不到 → 启动后台搜索（只启动一次）
+                from ld_instance_manager import auto_detect_mumu
+                info = auto_detect_mumu()
+                if info.get("manager_path"):
+                    self._mumu_path = info["manager_path"]
+                    _log_info(f"[SCAN] 自动检测 MuMu: {self._mumu_path}")
+            # 还找不到 → 启动后台全盘搜索（只启动一次）
             if not vms_cfg and not self._path_search_running:
                 self._path_search_running = True
                 def _search():
@@ -3642,35 +3598,14 @@ class EmulatorShutdownApp:
             mp_cfg = None
             mp = self._ld_paths.get("multiplayer_path")
             if not vms_cfg or not mp:
-                _cfg_path = self._find_config_file()
-                if _cfg_path:
-                    try:
-                        with open(_cfg_path, 'r', encoding='utf-8') as _f:
-                            _saved = json.load(_f)
-                        sp = _saved.get("paths", {})
-                        if not vms_cfg:
-                            vms_cfg = sp.get("vms_config_dir")
-                        if not vms_cfg:
-                            ld = sp.get("ld_path") or vms_cfg
-                            if ld:
-                                for p in [os.path.join(ld, "vms", "config"), os.path.join(ld, "vms")]:
-                                    if os.path.isdir(p):
-                                        vms_cfg = p; break
-                        if not mp:
-                            mp = sp.get("multiplayer_path")
-                        if not self._mumu_path:
-                            self._mumu_path = _saved.get("mumu_manager_path", "")
-                    except Exception as _e:
-                        pass
-                if not vms_cfg or not mp:
-                    from ld_instance_manager import auto_detect_paths
-                    detected = auto_detect_paths()
-                    if not vms_cfg and detected.get("vms_config_dir"):
-                        vms_cfg = detected["vms_config_dir"]
-                    if not mp and detected.get("multiplayer_path"):
-                        mp = detected["multiplayer_path"]
-                    if not self._mumu_path and detected.get("mumu_manager_path"):
-                        self._mumu_path = detected["mumu_manager_path"]
+                from ld_instance_manager import auto_detect_paths
+                detected = auto_detect_paths()
+                if not vms_cfg and detected.get("vms_config_dir"):
+                    vms_cfg = detected["vms_config_dir"]
+                if not mp and detected.get("multiplayer_path"):
+                    mp = detected["multiplayer_path"]
+                if not self._mumu_path and detected.get("mumu_manager_path"):
+                    self._mumu_path = detected["mumu_manager_path"]
             if mp:
                 mp_cfg = os.path.join(mp, "vms", "config")
 
@@ -3719,35 +3654,16 @@ class EmulatorShutdownApp:
                     return
                 snap = snapshots[sel[0]]
 
-                # 路径后备：同 _save_snapshot 逻辑
+                # 路径自动检测（不依赖配置文件，跨电脑可用）
                 vms_cfg = self._ld_paths.get("vms_config_dir")
                 mp = self._ld_paths.get("multiplayer_path")
                 if not vms_cfg or not mp:
-                    _cfg_path = self._find_config_file()
-                    if _cfg_path:
-                        try:
-                            with open(_cfg_path, 'r', encoding='utf-8') as _f:
-                                _saved = json.load(_f)
-                            sp = _saved.get("paths", {})
-                            if not vms_cfg:
-                                vms_cfg = sp.get("vms_config_dir")
-                            if not vms_cfg:
-                                ld = sp.get("ld_path") or vms_cfg
-                                if ld:
-                                    for p in [os.path.join(ld, "vms", "config"), os.path.join(ld, "vms")]:
-                                        if os.path.isdir(p):
-                                            vms_cfg = p; break
-                            if not mp:
-                                mp = sp.get("multiplayer_path")
-                        except Exception:
-                            pass
-                    if not vms_cfg or not mp:
-                        from ld_instance_manager import auto_detect_paths
-                        detected = auto_detect_paths()
-                        if not vms_cfg and detected.get("vms_config_dir"):
-                            vms_cfg = detected["vms_config_dir"]
-                        if not mp and detected.get("multiplayer_path"):
-                            mp = detected["multiplayer_path"]
+                    from ld_instance_manager import auto_detect_paths
+                    detected = auto_detect_paths()
+                    if not vms_cfg and detected.get("vms_config_dir"):
+                        vms_cfg = detected["vms_config_dir"]
+                    if not mp and detected.get("multiplayer_path"):
+                        mp = detected["multiplayer_path"]
                 mp_cfg = os.path.join(mp, "vms", "config") if mp else None
 
                 count, msg = restore_snapshot(snap['path'], vms_cfg, mp_cfg, mumu_vms_dir=self._get_mumu_vms_dir())
