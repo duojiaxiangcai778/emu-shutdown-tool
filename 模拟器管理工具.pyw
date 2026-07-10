@@ -1282,6 +1282,8 @@ class EmulatorShutdownApp:
                     _log_error(f"开机自动恢复快照失败: {e}")
             threading.Thread(target=_bg_restore, daemon=True).start()
             self._start_scan_loop()
+            # 立即触发首次实例扫描，不依赖后台线程完成
+            self.root.after(0, self._scan_and_display_instances)
             self.root.after(5000, self._refresh_log_display)
             _flush_log()
         except Exception as _e:
@@ -2517,6 +2519,8 @@ class EmulatorShutdownApp:
 
     def _start_scan_loop(self):
         self._trigger_scan()
+        # 定期扫描时顺便刷新实例列表显示
+        self.root.after(0, self._scan_and_display_instances)
         # 取消旧 timer 后再注册新 timer，防止叠加
         if hasattr(self, 'scan_timer_id') and self.scan_timer_id:
             try:
@@ -2891,22 +2895,9 @@ class EmulatorShutdownApp:
         """扫描并同时显示 LDPlayer + MuMu 实例"""
         # ---- 扫描 LDPlayer 实例 ----
         vms_cfg = self._ld_paths.get("vms_config_dir")
-        # 自动检测路径（不依赖配置文件中的绝对路径，跨电脑可用）
+        # 路径缺失 → 异步检测（不阻塞主线程）
         if not vms_cfg or not self._mumu_path:
-            from ld_instance_manager import auto_detect_paths
-            detected = auto_detect_paths()
-            if not vms_cfg and detected.get("vms_config_dir"):
-                vms_cfg = detected["vms_config_dir"]
-                self._ld_paths.setdefault("vms_config_dir", vms_cfg)
-                _log_info(f"[SCAN] 自动检测 LDPlayer vms: {vms_cfg}")
-            if not self._mumu_path:
-                from ld_instance_manager import auto_detect_mumu
-                info = auto_detect_mumu()
-                if info.get("manager_path"):
-                    self._mumu_path = info["manager_path"]
-                    _log_info(f"[SCAN] 自动检测 MuMu: {self._mumu_path}")
-            # 还找不到 → 启动后台全盘搜索（只启动一次）
-            if not vms_cfg and not self._path_search_running:
+            if not self._path_search_running:
                 self._path_search_running = True
                 def _search():
                     try:
@@ -2916,7 +2907,7 @@ class EmulatorShutdownApp:
                     finally:
                         self._path_search_running = False
                 threading.Thread(target=_search, daemon=True).start()
-            # 不 return，继续往下走：MuMu 扫描不依赖 vms_cfg
+            # 用现有路径继续往下（可能为 None），不阻塞主线程等异步结果
 
         ld_instances = []
         if vms_cfg:
