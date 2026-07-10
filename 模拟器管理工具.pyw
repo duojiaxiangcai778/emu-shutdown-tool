@@ -1358,7 +1358,13 @@ class EmulatorShutdownApp:
         paned.add(right_frame, width=280, stretch="never")
 
         def _on_mf_cfg(event):
-            main_canvas.itemconfig("main_inner", width=event.width)
+            # 防止宽度相同触发级联 Configure 事件（滚轮操作后闪屏/卡死）
+            try:
+                cur = main_canvas.itemcget("main_inner", "width")
+                if str(cur) != str(event.width):
+                    main_canvas.itemconfig("main_inner", width=event.width)
+            except tk.TclError:
+                main_canvas.itemconfig("main_inner", width=event.width)
         main_canvas.bind("<Configure>", _on_mf_cfg)
 
         # ---------- 卡片工厂 ----------
