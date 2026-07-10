@@ -2432,11 +2432,27 @@ class EmulatorShutdownApp:
                 total = len(instances)
                 succ = 0
 
+                # ---- 自动探测路径（与 _time_up 一致，不依赖后台线程是否完成）----
+                dnconsole = self._ld_paths.get("dnconsole") if self._ld_paths else None
+                mumu_path = self._mumu_path
+                if (not dnconsole or not os.path.isfile(dnconsole)) \
+                   or (mumu_keys and (not mumu_path or not os.path.isfile(mumu_path))):
+                    from ld_instance_manager import auto_detect_paths, auto_detect_mumu
+                    _detected = auto_detect_paths()
+                    if not dnconsole or not os.path.isfile(dnconsole):
+                        dnconsole = _detected.get("dnconsole", "") or dnconsole
+                    if mumu_keys and (not mumu_path or not os.path.isfile(mumu_path)):
+                        mumu_path = _detected.get("mumu_manager_path", "") or mumu_path
+                    if mumu_keys and (not mumu_path or not os.path.isfile(mumu_path)):
+                        info = auto_detect_mumu()
+                        if info.get("manager_path"):
+                            mumu_path = info["manager_path"]
+
                 # LDPlayer
                 if ld_names:
                     from ld_instance_manager import staggered_launch
-                    dnconsole = self._ld_paths.get("dnconsole")
                     if dnconsole and os.path.isfile(dnconsole):
+                        self._ld_paths["dnconsole"] = dnconsole
                         results = staggered_launch(dnconsole, ld_names, interval_seconds=5)
                         succ += sum(1 for _, ok, _ in results if ok)
                     else:
@@ -2444,18 +2460,19 @@ class EmulatorShutdownApp:
                             _log_error("测试启动: dnconsole 不可用，跳过 LDPlayer 实例")
 
                 # MuMu
-                if mumu_keys and self._mumu_path:
+                if mumu_keys and mumu_path:
+                    self._mumu_path = mumu_path
                     from ld_instance_manager import launch_mumu_instance, start_mumu_health_monitor
                     for k in mumu_keys:
                         idx = int(k.replace("mumu_", ""))
                         try:
-                            ok, msg = launch_mumu_instance(self._mumu_path, idx)
+                            ok, msg = launch_mumu_instance(mumu_path, idx)
                             if ok:
                                 succ += 1
                                 # 测试启动也挂上健康巡检（任何启动方式都应有检测）
                                 if self._mumu_health_check_enabled:
                                     monitor = start_mumu_health_monitor(
-                                        self._mumu_path, idx,
+                                        mumu_path, idx,
                                         check_interval=self._mumu_health_interval * 60)
                                     with self._mumu_lock:
                                         self._mumu_monitors[idx] = monitor
