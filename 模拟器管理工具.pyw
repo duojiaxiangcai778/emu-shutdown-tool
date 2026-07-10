@@ -2152,16 +2152,6 @@ class EmulatorShutdownApp:
                     if info.get("manager_path"):
                         mumu_path = info["manager_path"]
                     _log_info(f"_time_up: 自动探测 dnconsole={dnconsole}, mumu_path={mumu_path}")
-            if dnconsole and os.path.isfile(dnconsole):
-                self._ld_paths["dnconsole"] = dnconsole
-                if mumu_path:
-                    self._mumu_path = mumu_path
-                _log_info(f"_time_up: 路径就绪 dnconsole={dnconsole} mumu={mumu_path}")
-            else:
-                _log_error(f"_time_up: dnconsole 不可用，跳过启动 (ld_paths={self._ld_paths})")
-                t["vars"]["st_lbl"].config(text="未找到 dnconsole", fg=RED)
-                t["_executing"] = False
-                return
 
             instances = t["instances"][:]
             if not instances:
@@ -2170,10 +2160,26 @@ class EmulatorShutdownApp:
                 t["_executing"] = False
                 return
 
+            # 区分 LD 和 MuMu 实例
+            ld_names = [n for n in instances if not n.startswith("mumu_")]
+            mumu_keys = [n for n in instances if n.startswith("mumu_")]
+
+            # 仅在有 LD 实例时才需要 dnconsole
+            if ld_names:
+                if dnconsole and os.path.isfile(dnconsole):
+                    self._ld_paths["dnconsole"] = dnconsole
+                    _log_info(f"_time_up: 路径就绪 dnconsole={dnconsole}")
+                else:
+                    _log_error(f"_time_up: 有 LD 实例({len(ld_names)}个)但 dnconsole 不可用，跳过启动")
+                    t["vars"]["st_lbl"].config(text="未找到 dnconsole", fg=RED)
+                    t["_executing"] = False
+                    return
+            if mumu_path:
+                self._mumu_path = mumu_path
+            _log_info(f"_time_up: 路径确认 ld_names={len(ld_names)}个 mumu_keys={len(mumu_keys)}个 dnconsole={bool(dnconsole)} mumu_path={bool(mumu_path)}")
+
             def _work():
                 try:
-                    ld_names = [n for n in instances if not n.startswith("mumu_")]
-                    mumu_keys = [n for n in instances if n.startswith("mumu_")]
                     total = len(instances)
                     ok = 0
 
@@ -2207,7 +2213,7 @@ class EmulatorShutdownApp:
                                         with self._mumu_lock:
                                             self._mumu_monitors[idx] = monitor
                                         _log_info(f"_time_up MuMu {idx} 健康巡检已启动")
-                                time.sleep(_interval)
+                                time.sleep(5)
                             except Exception as _e_mu:
                                 _log_error(f"_time_up _work: MuMu {idx} 启动失败: {_e_mu}")
 
@@ -4183,7 +4189,7 @@ class EmulatorShutdownApp:
                         success[0] += 1
                     from ld_instance_manager import start_mumu_health_monitor
                     monitor = start_mumu_health_monitor(self._mumu_path, idx,
-                                                       check_interval=self._mumu_health_interval * 60)
+                                                        check_interval=self._mumu_health_interval * 60)
                     with self._mumu_lock:
                         self._mumu_monitors[idx] = monitor
                     _log_info(f"MuMu {idx} 定时巡检已启动（每{self._mumu_health_interval}分钟）")
