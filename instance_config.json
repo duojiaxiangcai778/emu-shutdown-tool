@@ -21,5 +21,14 @@
   "shutdown_always": false,
   "restart_always": false,
   "mumu_health_check": true,
-  "mumu_health_interval": 15
+  "mumu_health_interval": 15,
+  "paths": {
+    "ld_path": "D:\\E\\LDPlayer9",
+    "multiplayer_path": "D:\\E\\ldmutiplayer",
+    "vms_config_dir": "D:\\E\\LDPlayer9\\vms\\config",
+    "dnconsole": "D:\\E\\LDPlayer9\\dnconsole.exe",
+    "dnmultiplayerex": "D:\\E\\ldmutiplayer\\dnmultiplayerex.exe",
+    "mumu_manager_path": "D:\\E\\MuMu Player 12\\nx_main\\MuMuManager.exe"
+  },
+  "mumu_manager_path": "D:\\E\\MuMu Player 12\\nx_main\\MuMuManager.exe"
 }

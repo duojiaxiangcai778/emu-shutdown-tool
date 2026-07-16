@@ -1825,11 +1825,14 @@ class EmulatorShutdownApp:
                     if rem <= 0:
                         _log_info(f"计时器到期: id={t.get('id')} type={t.get('type')} target_ts={t.get('target_ts')}")
                         _flush_log()
-                        self.root.after(0, lambda: time_up_fn(t)); break
+                        t["_time_up_fn"] = time_up_fn
+                        self.root.event_generate('<<TimerExpired>>', when='tail')
+                        break
                     t["remaining"] = rem
                     if not t.get("_pending_update"):
                         t["_pending_update"] = True
-                        self.root.after(0, lambda: update_fn(t))
+                        t["_update_fn"] = update_fn
+                        self.root.event_generate('<<TimerUpdate>>', when='tail')
                     time.sleep(0.5)
             except Exception as _e:
                 _log_error(f"定时器循环异常 id={t.get('id')}", _e)
