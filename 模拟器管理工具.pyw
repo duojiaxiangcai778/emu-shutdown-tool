@@ -1229,6 +1229,22 @@ class EmulatorShutdownApp:
 
     def _lazy_init(self):
         """UI 显示后的延迟初始化"""
+        # 线程安全事件处理器：后台线程用 event_generate 通知主线程执行 GUI 操作
+        def _on_timer_expired(event):
+            for tlist in [self.shutdown_tasks, self.launch_tasks]:
+                for t in tlist:
+                    fn = t.pop('_time_up_fn', None)
+                    if fn:
+                        fn(t)
+        def _on_timer_update(event):
+            for tlist in [self.shutdown_tasks, self.launch_tasks]:
+                for t in tlist:
+                    fn = t.pop('_update_fn', None)
+                    if fn:
+                        t["_pending_update"] = False
+                        fn(t)
+        self.root.bind_all('<<TimerExpired>>', _on_timer_expired, add='+')
+        self.root.bind_all('<<TimerUpdate>>', _on_timer_update, add='+')
         try:
             from ld_instance_manager import TOOL_CONFIG_FILE as _CFG_PATH
             _log_info("程序启动，开始加载配置...")
@@ -2542,8 +2558,7 @@ class EmulatorShutdownApp:
 
     def _start_scan_loop(self):
         self._trigger_scan()
-        # 定期扫描时顺便刷新实例列表显示
-        self.root.after_idle(self._scan_and_display_instances)
+        # 定期扫描改为后台执行，不阻塞主线程
         # 取消旧 timer 后再注册新 timer，防止叠加
         if hasattr(self, 'scan_timer_id') and self.scan_timer_id:
             try:
