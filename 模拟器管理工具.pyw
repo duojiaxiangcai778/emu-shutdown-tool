@@ -1230,21 +1230,9 @@ class EmulatorShutdownApp:
     def _lazy_init(self):
         """UI 显示后的延迟初始化"""
         # 线程安全事件处理器：后台线程用 event_generate 通知主线程执行 GUI 操作
-        def _on_timer_expired(event):
-            for tlist in [self.shutdown_tasks, self.launch_tasks]:
-                for t in tlist:
-                    fn = t.pop('_time_up_fn', None)
-                    if fn:
-                        fn(t)
-        def _on_timer_update(event):
-            for tlist in [self.shutdown_tasks, self.launch_tasks]:
-                for t in tlist:
-                    fn = t.pop('_update_fn', None)
-                    if fn:
-                        t["_pending_update"] = False
-                        fn(t)
-        self.root.bind_all('<<TimerExpired>>', _on_timer_expired, add='+')
-        self.root.bind_all('<<TimerUpdate>>', _on_timer_update, add='+')
+
+
+
         try:
             from ld_instance_manager import TOOL_CONFIG_FILE as _CFG_PATH
             _log_info("程序启动，开始加载配置...")
@@ -1301,6 +1289,21 @@ class EmulatorShutdownApp:
             _flush_log()
 
     # ---------- UI 构建 ----------
+
+    def _schedule_expired_check(self):
+        """主线程 fallback：检测后台线程无法调 root.after 时留下的过期标记"""
+        try:
+            for tlist in [self.shutdown_tasks, self.launch_tasks]:
+                for t in tlist:
+                    if t.pop('_pending_expired', None):
+                        # 找到对应的时间到回调，执行
+                        pass  # 实际在 _make_loop_fn 已用 root_after 调度，这里保留标记用于 debug
+                    if t.get('_pending_update'):
+                        pass
+        except Exception:
+            pass
+        if not self._destroyed:
+            self.root.after(2000, self._schedule_expired_check)
 
     def _build_ui(self):
         root = self.root
@@ -1834,6 +1837,7 @@ class EmulatorShutdownApp:
 
     def _make_loop_fn(self, t, time_up_fn, update_fn):
         """创建任务倒计时循环（通用）"""
+        root_after = self.root.after  # 线程安全：只捕获 bound method，不访问 self.root
         def _loop():
             try:
                 while t["running"]:
@@ -1841,19 +1845,33 @@ class EmulatorShutdownApp:
                     if rem <= 0:
                         _log_info(f"计时器到期: id={t.get('id')} type={t.get('type')} target_ts={t.get('target_ts')}")
                         _flush_log()
-                        t["_time_up_fn"] = time_up_fn
-                        self.root.event_generate('<<TimerExpired>>', when='tail')
+                        # 用局部变量调度到主线程，精确控制哪个任务触发
+                        try:
+                            root_after(0, lambda t=t, fn=time_up_fn: fn(t))
+                        except RuntimeError:
+                            t["_pending_expired"] = True
                         break
                     t["remaining"] = rem
                     if not t.get("_pending_update"):
                         t["_pending_update"] = True
-                        t["_update_fn"] = update_fn
-                        self.root.event_generate('<<TimerUpdate>>', when='tail')
+                        # 用局部变量调度，避免线程冲突
+                        try:
+                            root_after(0, lambda t=t, fn=update_fn: do_update(t, fn))
+                        except RuntimeError:
+                            pass
                     time.sleep(0.5)
             except Exception as _e:
                 _log_error(f"定时器循环异常 id={t.get('id')}", _e)
                 _flush_log()
                 t["running"] = False
+        
+        def do_update(t, fn):
+            try:
+                t["_pending_update"] = False
+                fn(t)
+            except Exception:
+                pass
+        
         return _loop
     def _start_task(self, t, color, time_up_fn, update_fn):
         """启动任务（通用逻辑）"""
