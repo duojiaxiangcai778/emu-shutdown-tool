@@ -48,7 +48,6 @@ def auto_detect_paths(force=False):
 
     result = {
         "ld_path": None,
-        "ld_path": None,
         "multiplayer_path": None,
         "vms_config_dir": None,
         "dnconsole": None,

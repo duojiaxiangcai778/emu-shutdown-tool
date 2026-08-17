@@ -1178,17 +1178,17 @@ class EmulatorShutdownApp:
                 self.root.iconbitmap(ico)
         except Exception as _e:
             pass
-        self.root.geometry("880x850")
-        self.root.minsize(820, 700)
+        self.root.geometry("980x860")
+        self.root.minsize(900, 700)
         self.root.configure(bg=BG)
 
         # 窗口居中
         self.root.update_idletasks()
         sw = self.root.winfo_screenwidth()
         sh = self.root.winfo_screenheight()
-        x = (sw - 880) // 2
-        y = (sh - 850) // 2
-        self.root.geometry(f"880x850+{x}+{y}")
+        x = max(0, (sw - 980) // 2)
+        y = max(0, (sh - 860) // 2)
+        self.root.geometry(f"980x860+{x}+{y}")
 
         # 关闭任务
         self.shutdown_tasks: list = []
@@ -1229,10 +1229,6 @@ class EmulatorShutdownApp:
 
     def _lazy_init(self):
         """UI 显示后的延迟初始化"""
-        # 线程安全事件处理器：后台线程用 event_generate 通知主线程执行 GUI 操作
-
-
-
         try:
             from ld_instance_manager import TOOL_CONFIG_FILE as _CFG_PATH
             _log_info("程序启动，开始加载配置...")
@@ -1308,6 +1304,19 @@ class EmulatorShutdownApp:
     def _build_ui(self):
         root = self.root
 
+        # 统一主题控件样式，避免系统默认控件在深色界面中出现白色块。
+        style = ttk.Style(root)
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            pass
+        style.configure("Dark.TEntry", fieldbackground=BG_LIGHT, foreground=TEXT,
+                        insertcolor=TEXT, bordercolor=BORDER)
+        style.configure("Dark.TCombobox", fieldbackground=BG_LIGHT, foreground=TEXT,
+                        selectbackground=PRIMARY, selectforeground="white")
+        style.configure("Dark.TSpinbox", fieldbackground=BG_LIGHT, foreground=TEXT,
+                        arrowsize=12)
+
         self.f_title  = Font(family="Microsoft YaHei", size=13, weight="bold")
         self.f_sec    = Font(family="Microsoft YaHei", size=10, weight="bold")
         self.f_body   = Font(family="Microsoft YaHei", size=10)
@@ -1327,7 +1336,7 @@ class EmulatorShutdownApp:
         status_dot.pack(side="left", padx=(8, 0))
         status_dot.pack_propagate(False)
         self._status_dot = status_dot
-        tk.Label(h_row, text="v4.2", font=self.f_small,
+        tk.Label(h_row, text="v4.3", font=self.f_small,
                  bg=CARD, fg=TEXT_LIGHT, padx=6).pack(side="right")
         # 底部强调线
         tk.Frame(header, bg=PRIMARY, height=2).pack(side="bottom", fill="x")
@@ -1696,7 +1705,7 @@ class EmulatorShutdownApp:
         # 底栏
         ft = tk.Frame(root, bg=BG, height=16)
         ft.pack(fill="x")
-        tk.Label(ft, text="v4.2 · 环境检测 · 模拟器管理 · 定时任务 · 关机联动",
+        tk.Label(ft, text="v4.3 · 环境检测 · 模拟器管理 · 定时任务 · 关机联动",
                  font=("Microsoft YaHei", 7), bg=BG, fg=TEXT_LIGHT).pack(expand=True)
 
         # 统一滚轮处理：所有 widget 已创建完毕，可以安全引用所有变量
@@ -3242,7 +3251,12 @@ class EmulatorShutdownApp:
                         if inst.get('name') == name:
                             idx = inst['index']
                             result = launch_mumu_instance(self._mumu_path, idx)
-                            if result:
+                            # MuMu 控制函数返回 (success, message)，不能直接判断元组。
+                            if isinstance(result, tuple):
+                                launched, _ = result
+                            else:
+                                launched = bool(result)
+                            if launched:
                                 ok += 1
 
                             break
@@ -4073,15 +4087,17 @@ class EmulatorShutdownApp:
 
     def _apply_detected_paths(self, detected):
         """应用自动搜索到的模拟器路径到实例变量"""
+        if self._destroyed:
+            return
         if detected.get("ld_path"):
             self._ld_paths = detected
-            self.root.after(0, lambda: self.ld_path_var.set(detected["ld_path"]))
-            self.root.after(0, lambda: self.ld_path_entry.config(fg=TEXT))
+            self.ld_path_var.set(detected["ld_path"])
+            self.ld_path_entry.config(fg=TEXT)
             _log_info(f"[PATH] 自动搜索到 LDPlayer: {detected['ld_path']}")
         if not self._mumu_path and detected.get("mumu_manager_path"):
             self._mumu_path = detected["mumu_manager_path"]
-            self.root.after(0, lambda: self.mumu_path_var.set(detected["mumu_manager_path"]))
-            self.root.after(0, lambda: self.mumu_path_entry.config(fg=TEXT))
+            self.mumu_path_var.set(detected["mumu_manager_path"])
+            self.mumu_path_entry.config(fg=TEXT)
             _log_info(f"[PATH] 自动搜索到 MuMu: {detected['mumu_manager_path']}")
         # 触发一次实例扫描
         self.root.after(100, self._scan_and_display_instances)
@@ -4137,9 +4153,10 @@ class EmulatorShutdownApp:
             from ld_instance_manager import launch_mumu_instance
             ok, msg = launch_mumu_instance(self._mumu_path, index)
             result = {"success": ok, "message": msg}
-            self.root.after(0, lambda: self._toast(
-                "启动结果" if result["success"] else "启动失败", result["message"]))
-            self.root.after(500, self._scan_and_display_instances)
+            if not self._destroyed:
+                self.root.after(0, lambda: self._toast(
+                    "启动结果" if result["success"] else "启动失败", result["message"]))
+                self.root.after(500, self._scan_and_display_instances)
         threading.Thread(target=_work, daemon=True).start()
 
     def _on_mumu_shutdown_one(self, index):
@@ -4307,6 +4324,8 @@ class EmulatorShutdownApp:
     # ---------- 窗口关闭 ----------
 
     def _on_close(self):
+        if self._destroyed:
+            return
         running = sum(1 for t in self.shutdown_tasks if t["running"])
         launch_running = sum(1 for t in self.launch_tasks if t["running"])
         _log_info(f"程序关闭（定时关闭运行中: {running}，定时启动运行中: {launch_running}）")
