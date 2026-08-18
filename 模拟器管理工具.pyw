@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-模拟器管理工具 v4.2
+模拟器管理工具 v4.3
 - 保留全部原有功能：定时任务、模拟器检测、一键关闭
 - 新增优化：优雅关闭（WM_CLOSE → 超时 → 强制）、自动关机、配置备份
 - 新增：雷电模拟器实例管理（自动探测路径、设置编辑、间隔启动、配置快照）
@@ -126,7 +126,7 @@ def _flush_log():
         log_path = _get_log_path()
         # 仅在文件不存在或为空时写入 header
         need_header = not os.path.isfile(log_path) or os.path.getsize(log_path) == 0
-        header = f"\n模拟器管理工具 v4.2 运行日志\n{'=' * 50}\n" if need_header else ""
+        header = f"\n模拟器管理工具 v4.3 运行日志\n{'=' * 50}\n" if need_header else ""
         with open(log_path, 'a', encoding='utf-8') as f:
             f.write(header + content)
         # 再检查文件大小，超过 1MB 时截断保留后半段
@@ -319,24 +319,24 @@ def _get_icon_path():
 
 
 # ============================================================
-# 配色方案 — 暗色主题（Dark Theme）
+# 配色方案 — 浅色工作台主题
 # ============================================================
-PRIMARY     = "#6366F1"   # 靛蓝/紫色（品牌色）
-ACCENT      = "#818CF8"   # 浅靛蓝（强调/悬停）
-BG          = "#1E1E2E"   # 深色主背景
-CARD        = "#2B2B3D"   # 卡片背景
-TEXT        = "#E0E0E0"   # 主文字（浅色）
-TEXT_SUB    = "#A0A0A8"   # 次要文字
-TEXT_LIGHT  = "#6B7280"   # 浅灰（占位/装饰）
-BORDER      = "#3A3A52"   # 深色边框
+PRIMARY     = "#2563EB"   # 蓝色主操作
+ACCENT      = "#0EA5E9"   # 青蓝强调
+BG          = "#F3F6FA"   # 页面背景
+CARD        = "#FFFFFF"   # 内容背景
+TEXT        = "#172033"   # 主文字
+TEXT_SUB    = "#5B6578"   # 次要文字
+TEXT_LIGHT  = "#8A94A6"   # 占位/装饰
+BORDER      = "#DCE3EE"   # 边框
 GREEN       = "#22C55E"   # 成功绿
 RED         = "#EF4444"   # 错误红
 YELLOW      = "#F59E0B"   # 警告琥珀
-BG_LIGHT    = "#363650"   # 浅色背景（输入框等）
+BG_LIGHT    = "#F7F9FC"   # 输入框背景
 
 # 扩展色
-ORANGE_LIGHT  = "#818CF8"
-ORANGE_DARK   = "#4F46E5"
+ORANGE_LIGHT  = "#64748B"
+ORANGE_DARK   = "#475569"
 
 # 兼容旧变量名
 MI_ORANGE     = PRIMARY
@@ -1171,24 +1171,24 @@ class RoundedButton(tk.Frame):
 class EmulatorShutdownApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("模拟器管理工具 v4.2")
+        self.root.title("模拟器管理工具 v4.3")
         try:
             ico = _get_icon_path()
             if ico:
                 self.root.iconbitmap(ico)
         except Exception as _e:
             pass
-        self.root.geometry("980x860")
-        self.root.minsize(900, 700)
+        self.root.geometry("1120x760")
+        self.root.minsize(980, 680)
         self.root.configure(bg=BG)
 
         # 窗口居中
         self.root.update_idletasks()
         sw = self.root.winfo_screenwidth()
         sh = self.root.winfo_screenheight()
-        x = max(0, (sw - 980) // 2)
-        y = max(0, (sh - 860) // 2)
-        self.root.geometry(f"980x860+{x}+{y}")
+        x = max(0, (sw - 1120) // 2)
+        y = max(0, (sh - 760) // 2)
+        self.root.geometry(f"1120x760+{x}+{y}")
 
         # 关闭任务
         self.shutdown_tasks: list = []
@@ -1224,7 +1224,7 @@ class EmulatorShutdownApp:
         self._config_loaded = False
         self._config_save_lock = threading.Lock()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
-        self._build_ui()
+        self._build_ui_v2()
         self.root.after_idle(self._lazy_init)
 
     def _lazy_init(self):
@@ -1301,55 +1301,235 @@ class EmulatorShutdownApp:
         if not self._destroyed:
             self.root.after(2000, self._schedule_expired_check)
 
-    def _build_ui(self):
+    def _build_ui_v2(self):
+        """重构后的工作台：页面分流，主窗口不再包含嵌套滚动区。"""
         root = self.root
-
-        # 统一主题控件样式，避免系统默认控件在深色界面中出现白色块。
         style = ttk.Style(root)
         try:
             style.theme_use("clam")
         except tk.TclError:
             pass
         style.configure("Dark.TEntry", fieldbackground=BG_LIGHT, foreground=TEXT,
-                        insertcolor=TEXT, bordercolor=BORDER)
+                        insertcolor=TEXT, bordercolor=BORDER, lightcolor=BORDER,
+                        darkcolor=BORDER)
         style.configure("Dark.TCombobox", fieldbackground=BG_LIGHT, foreground=TEXT,
-                        selectbackground=PRIMARY, selectforeground="white")
+                        background=CARD, selectbackground=PRIMARY, selectforeground="white",
+                        bordercolor=BORDER, arrowsize=14)
         style.configure("Dark.TSpinbox", fieldbackground=BG_LIGHT, foreground=TEXT,
-                        arrowsize=12)
+                        background=CARD, bordercolor=BORDER, arrowsize=12)
+        style.configure("Workspace.TNotebook", background=BG, borderwidth=0)
+        style.configure("Workspace.TNotebook.Tab", background=BG, foreground=TEXT_SUB,
+                        padding=(18, 10), font=("Microsoft YaHei", 10, "bold"))
+        style.map("Workspace.TNotebook.Tab", background=[("selected", CARD)],
+                  foreground=[("selected", PRIMARY)])
 
-        self.f_title  = Font(family="Microsoft YaHei", size=13, weight="bold")
+        self.f_title = Font(family="Microsoft YaHei", size=16, weight="bold")
+        self.f_sec = Font(family="Microsoft YaHei", size=11, weight="bold")
+        self.f_body = Font(family="Microsoft YaHei", size=10)
+        self.f_small = Font(family="Microsoft YaHei", size=8)
+
+        header = tk.Frame(root, bg=CARD, height=64, highlightthickness=1,
+                          highlightbackground=BORDER)
+        header.pack(fill="x")
+        header.pack_propagate(False)
+        h_row = tk.Frame(header, bg=CARD)
+        h_row.pack(fill="both", expand=True, padx=24)
+        tk.Label(h_row, text="模拟器工作台", font=self.f_title, bg=CARD, fg=TEXT).pack(side="left")
+        status_dot = tk.Frame(h_row, bg=GREEN, width=8, height=8)
+        status_dot.pack(side="left", padx=(12, 5)); status_dot.pack_propagate(False)
+        self._status_dot = status_dot
+        tk.Label(h_row, text="服务运行中", font=self.f_small, bg=CARD, fg=TEXT_SUB).pack(side="left")
+        tk.Label(h_row, text="v4.3 · 新版工作台", font=self.f_small, bg=CARD, fg=TEXT_LIGHT).pack(side="right")
+        tk.Frame(header, bg=PRIMARY, height=3).pack(side="bottom", fill="x")
+
+        shell = tk.Frame(root, bg=BG, padx=20, pady=14)
+        shell.pack(fill="both", expand=True)
+        self._workspace = ttk.Notebook(shell, style="Workspace.TNotebook")
+        self._workspace.pack(fill="both", expand=True)
+        instance_page = tk.Frame(self._workspace, bg=BG, padx=16, pady=14)
+        tasks_page = tk.Frame(self._workspace, bg=BG, padx=16, pady=14)
+        env_page = tk.Frame(self._workspace, bg=BG, padx=16, pady=14)
+        log_page = tk.Frame(self._workspace, bg=BG, padx=16, pady=14)
+        self._workspace.add(instance_page, text="实例管理")
+        self._workspace.add(tasks_page, text="自动化任务")
+        self._workspace.add(env_page, text="环境诊断")
+        self._workspace.add(log_page, text="运行日志")
+        RoundedButton(h_row, text="日志", command=lambda: self._workspace.select(log_page),
+                      bg=BG_LIGHT, fg=TEXT_SUB, font=self.f_small, padx=10).pack(side="right", padx=(0, 12))
+
+        def card(parent, title, subtitle="", accent=PRIMARY):
+            outer = tk.Frame(parent, bg=CARD, highlightthickness=1, highlightbackground=BORDER)
+            outer.pack(fill="x", pady=(0, 12))
+            stripe = tk.Frame(outer, bg=accent, width=4)
+            stripe.pack(side="left", fill="y")
+            inner = tk.Frame(outer, bg=CARD, padx=16, pady=13)
+            inner.pack(fill="both", expand=True)
+            head = tk.Frame(inner, bg=CARD)
+            head.pack(fill="x", pady=(0, 9))
+            tk.Label(head, text=title, font=self.f_sec, bg=CARD, fg=TEXT).pack(side="left")
+            if subtitle:
+                tk.Label(head, text=subtitle, font=self.f_small, bg=CARD, fg=TEXT_LIGHT).pack(side="left", padx=(10, 0))
+            return inner, head
+
+        # 实例管理：路径、操作和实例列表置于同一页，取消主页面滚动。
+        paths, _ = card(instance_page, "模拟器实例", "扫描、选择并批量控制实例", ACCENT)
+        for title, attr, selector, color in [
+            ("雷电", "ld", self._manual_select_ld_path, PRIMARY),
+            ("MuMu", "mumu", self._manual_select_mumu_path, ORANGE_DARK),
+        ]:
+            row = tk.Frame(paths, bg=CARD); row.pack(fill="x", pady=3)
+            tk.Label(row, text=title, font=self.f_body, bg=CARD, fg=TEXT_SUB, width=5, anchor="w").pack(side="left")
+            var = tk.StringVar(value="")
+            entry = tk.Entry(row, textvariable=var, font=("Consolas", 9), bg=BG_LIGHT, fg=TEXT,
+                             relief="flat", bd=0, highlightthickness=1, highlightbackground=BORDER)
+            entry.pack(side="left", fill="x", expand=True, ipady=5)
+            RoundedButton(row, text="浏览", command=selector, bg=color, fg="white", font=self.f_small,
+                          padx=8, pady=2).pack(side="left", padx=(6, 0))
+            if attr == "ld":
+                self.ld_path_var, self.ld_path_entry, self._ld_placeholder = var, entry, False
+                entry.bind("<Return>", lambda e: self._on_ld_path_enter())
+                entry.bind("<FocusOut>", lambda e: self._on_ld_path_enter())
+            else:
+                self.mumu_path_var, self.mumu_path_entry, self._mumu_placeholder = var, entry, False
+                entry.bind("<Return>", lambda e: self._on_mumu_path_enter())
+                entry.bind("<FocusOut>", lambda e: self._on_mumu_path_enter())
+
+        tools = tk.Frame(paths, bg=CARD); tools.pack(fill="x", pady=(11, 8))
+        RoundedButton(tools, text="扫描实例", command=self._refresh_instances, bg=PRIMARY, fg="white", font=self.f_body, padx=11).pack(side="left", padx=(0, 5))
+        RoundedButton(tools, text="编辑设置", command=self._edit_instance_settings, bg=TEXT_SUB, fg="white", font=self.f_body, padx=11).pack(side="left", padx=(0, 5))
+        RoundedButton(tools, text="保存快照", command=self._save_snapshot, bg=GREEN, fg="white", font=self.f_body, padx=11).pack(side="left", padx=(0, 5))
+        RoundedButton(tools, text="恢复快照", command=self._restore_snapshot, bg=ORANGE_LIGHT, fg="white", font=self.f_body, padx=11).pack(side="left", padx=(0, 5))
+        RoundedButton(tools, text="关闭全部", command=self._on_kill_now, bg=RED, fg="white", font=self.f_body, padx=11).pack(side="left")
+        self._kill_status_var = tk.StringVar(value="")
+        tk.Label(tools, textvariable=self._kill_status_var, font=self.f_small, bg=CARD, fg=TEXT_SUB).pack(side="left", padx=10)
+        batch = tk.Frame(paths, bg=CARD); batch.pack(fill="x")
+        tk.Label(batch, text="启动选中实例，间隔", font=self.f_small, bg=CARD, fg=TEXT_SUB).pack(side="left")
+        self.launch_interval_var = tk.StringVar(value="5")
+        ttk.Spinbox(batch, from_=1, to=60, width=3, textvariable=self.launch_interval_var,
+                    font=("Consolas", 9), style="Dark.TSpinbox").pack(side="left", padx=4)
+        tk.Label(batch, text="秒", font=self.f_small, bg=CARD, fg=TEXT_SUB).pack(side="left")
+        self.launch_status_var = tk.StringVar(value="")
+        self.launch_btn = RoundedButton(batch, text="启动选中", command=self._on_staggered_launch, bg=GREEN, fg="white", font=self.f_body, padx=11)
+        self.launch_btn.pack(side="left", padx=10)
+        tk.Label(batch, textvariable=self.launch_status_var, font=self.f_small, bg=CARD, fg=TEXT_SUB).pack(side="left")
+        tk.Frame(paths, bg=BORDER, height=1).pack(fill="x", pady=(12, 5))
+        ih = tk.Frame(paths, bg=CARD); ih.pack(fill="x")
+        for text, width in [("自启", 5), ("实例", 22), ("配置", 25), ("状态", 10), ("操作", 12)]:
+            tk.Label(ih, text=text, width=width, anchor="w", font=("Microsoft YaHei", 8, "bold"), bg=CARD, fg=TEXT_SUB).pack(side="left")
+        self.inst_rows_frame = tk.Frame(paths, bg=CARD)
+        self.inst_rows_frame.pack(fill="both", expand=True)
+
+        # 自动化：两个清晰栏目，任务直接展开，不再在卡片内创建滚动 Canvas。
+        shutdown, _ = card(tasks_page, "定时关闭", "任务到点后优雅关闭模拟器", RED)
+        self.shutdown_tasks_frame = tk.Frame(shutdown, bg=CARD)
+        self.shutdown_tasks_frame.pack(fill="x")
+        s_actions = tk.Frame(shutdown, bg=CARD); s_actions.pack(fill="x", pady=(10, 0))
+        RoundedButton(s_actions, text="新建关闭任务", command=lambda: self._add_task("shutdown"), bg=RED, fg="white", font=self.f_body, padx=10).pack(side="left", padx=(0, 5))
+        RoundedButton(s_actions, text="全部启动", command=lambda: self._start_all("shutdown"), bg=PRIMARY, fg="white", font=self.f_small, padx=9).pack(side="left", padx=(0, 5))
+        RoundedButton(s_actions, text="全部停止", command=lambda: self._stop_all("shutdown"), bg=TEXT_SUB, fg="white", font=self.f_small, padx=9).pack(side="left")
+        self.shutdown_var = tk.BooleanVar(value=True); self.restart_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(s_actions, text="关闭后关机", variable=self.shutdown_var, command=self._save_tasks_config, font=self.f_small, bg=CARD, fg=RED, selectcolor=CARD, activebackground=CARD).pack(side="right", padx=8)
+        tk.Checkbutton(s_actions, text="改为重启", variable=self.restart_var, command=self._save_tasks_config, font=self.f_small, bg=CARD, fg=TEXT_SUB, selectcolor=CARD, activebackground=CARD).pack(side="right")
+        launch, _ = card(tasks_page, "定时启动", "按计划启动已选实例", GREEN)
+        self.launch_tasks_frame = tk.Frame(launch, bg=CARD)
+        self.launch_tasks_frame.pack(fill="x")
+        l_actions = tk.Frame(launch, bg=CARD); l_actions.pack(fill="x", pady=(10, 0))
+        RoundedButton(l_actions, text="新建启动任务", command=self._add_launch_task, bg=GREEN, fg="white", font=self.f_body, padx=10).pack(side="left", padx=(0, 5))
+        RoundedButton(l_actions, text="全部启动", command=self._start_all_launch, bg=PRIMARY, fg="white", font=self.f_small, padx=9).pack(side="left", padx=(0, 5))
+        RoundedButton(l_actions, text="全部停止", command=self._stop_all_launch, bg=TEXT_SUB, fg="white", font=self.f_small, padx=9).pack(side="left")
+        auto = tk.Frame(tasks_page, bg=BG); auto.pack(fill="x", pady=2)
+        self.auto_launch_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(auto, text="开机后自动启动已勾选的实例", variable=self.auto_launch_var, command=self._save_tasks_config, font=self.f_small, bg=BG, fg=TEXT_SUB, selectcolor=BG, activebackground=BG).pack(side="left")
+
+        # 环境诊断独占页面，避免诊断详情与日常操作竞争空间。
+        env, env_head = card(env_page, "运行环境诊断", "检测 Hyper-V、VBS 与 CPU 虚拟化状态", PRIMARY)
+        self.env_score_var = tk.StringVar(value="尚未检测")
+        self.env_score_lbl = tk.Label(env_head, textvariable=self.env_score_var, font=self.f_body, bg=CARD, fg=TEXT_LIGHT)
+        self.env_score_lbl.pack(side="right")
+        self.env_frame = tk.Frame(env, bg=CARD); self.env_frame.pack(fill="x")
+        self._rebuild_env_ui([])
+        env_buttons = tk.Frame(env, bg=CARD); env_buttons.pack(fill="x", pady=(12, 6))
+        self.env_scan_btn = RoundedButton(env_buttons, text="开始检测", command=self._on_env_scan, bg=PRIMARY, fg="white", font=self.f_body, padx=12)
+        self.env_scan_btn.pack(side="left", padx=(0, 6))
+        self.env_fix_btn = RoundedButton(env_buttons, text="一键修复", command=self._on_env_fix, bg=RED, fg="white", font=self.f_body, padx=12)
+        self.env_fix_btn.pack_forget()
+        self.env_status_var = tk.StringVar(value="点击「开始检测」查看兼容性")
+        tk.Label(env_buttons, textvariable=self.env_status_var, font=self.f_small, bg=CARD, fg=TEXT_SUB).pack(side="left", padx=8)
+        self.env_detail_text = tk.Text(env, font=("Consolas", 9), bg=BG_LIGHT, fg=TEXT, height=10, wrap="word", relief="flat", bd=0, highlightthickness=1, highlightbackground=BORDER, padx=10, pady=8)
+        self.env_detail_text.pack(fill="both", expand=True, pady=(6, 0))
+        self.env_detail_text.insert("1.0", "检测结果详情将在此显示..."); self.env_detail_text.config(state="disabled")
+
+        log, log_head = card(log_page, "运行日志", "用于排查扫描、启动、关闭与定时任务", TEXT_SUB)
+        RoundedButton(log_head, text="复制", command=self._copy_log, bg=BG_LIGHT, fg=TEXT_SUB, font=self.f_small, padx=8, pady=2).pack(side="right", padx=(5, 0))
+        RoundedButton(log_head, text="清空显示", command=self._clear_log_display, bg=BG_LIGHT, fg=TEXT_SUB, font=self.f_small, padx=8, pady=2).pack(side="right")
+        self._log_text = tk.Text(log, bg=BG_LIGHT, fg=TEXT_SUB, font=("Consolas", 9), bd=0, wrap="word", state="disabled", relief="flat", padx=10, pady=10)
+        self._log_text.pack(fill="both", expand=True)
+
+        footer = tk.Frame(root, bg=BG, height=26); footer.pack(fill="x"); footer.pack_propagate(False)
+        tk.Checkbutton(footer, text="开机自启", variable=self.auto_start_var, command=self._on_auto_start_toggle, font=self.f_small, bg=BG, fg=TEXT_SUB, selectcolor=BG, activebackground=BG).pack(side="left", padx=22)
+        RoundedButton(footer, text="最小化", command=self._minimize_to_tray, bg=TEXT_LIGHT, fg="white", font=self.f_small, padx=9, pady=1).pack(side="right", padx=22)
+
+    def _build_ui(self):
+        root = self.root
+
+        # 统一控件为浅色工作台样式，避免平台默认控件破坏层级。
+        style = ttk.Style(root)
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            pass
+        style.configure("Dark.TEntry", fieldbackground=BG_LIGHT, foreground=TEXT,
+                        insertcolor=TEXT, bordercolor=BORDER, lightcolor=BORDER,
+                        darkcolor=BORDER)
+        style.configure("Dark.TCombobox", fieldbackground=BG_LIGHT, foreground=TEXT,
+                        background=CARD, selectbackground=PRIMARY, selectforeground="white",
+                        bordercolor=BORDER, arrowsize=14)
+        style.configure("Dark.TSpinbox", fieldbackground=BG_LIGHT, foreground=TEXT,
+                        background=CARD, bordercolor=BORDER, arrowsize=12)
+        style.configure("Vertical.TScrollbar", background="#CBD5E1", troughcolor=BG,
+                        bordercolor=BG, arrowcolor=TEXT_SUB)
+
+        self.f_title  = Font(family="Microsoft YaHei", size=15, weight="bold")
         self.f_sec    = Font(family="Microsoft YaHei", size=10, weight="bold")
         self.f_body   = Font(family="Microsoft YaHei", size=10)
         self.f_small  = Font(family="Microsoft YaHei", size=8)
 
-        # ===== 顶栏 — 暗色主题 =====
-        header = tk.Frame(root, bg=CARD, height=48)
+        # ===== 顶栏：标题、健康状态和全局动作 =====
+        header = tk.Frame(root, bg=CARD, height=58, highlightthickness=1,
+                          highlightbackground=BORDER)
         header.pack(fill="x")
         header.pack_propagate(False)
         h_row = tk.Frame(header, bg=CARD)
         h_row.pack(expand=True, fill="x", padx=20)
-        tk.Label(h_row, text="模拟器管理", font=self.f_title,
+        tk.Label(h_row, text="模拟器工作台", font=self.f_title,
                  bg=CARD, fg=TEXT).pack(side="left")
-        # 运行状态点
         status_dot = tk.Frame(h_row, bg=GREEN, width=8, height=8,
                               highlightthickness=0, bd=0)
-        status_dot.pack(side="left", padx=(8, 0))
+        status_dot.pack(side="left", padx=(10, 5))
         status_dot.pack_propagate(False)
         self._status_dot = status_dot
+        tk.Label(h_row, text="服务运行中", font=self.f_small,
+                 bg=CARD, fg=TEXT_SUB).pack(side="left")
         tk.Label(h_row, text="v4.3", font=self.f_small,
-                 bg=CARD, fg=TEXT_LIGHT, padx=6).pack(side="right")
-        # 底部强调线
-        tk.Frame(header, bg=PRIMARY, height=2).pack(side="bottom", fill="x")
+                 bg=CARD, fg=TEXT_LIGHT).pack(side="right")
+        self._log_toggle_btn = RoundedButton(
+            h_row, text="日志", command=lambda: self._toggle_log_panel(paned),
+            bg=BG_LIGHT, fg=TEXT_SUB, font=self.f_small, padx=10
+        ) if False else None
+        tk.Frame(header, bg=PRIMARY, height=3).pack(side="bottom", fill="x")
 
-        # ===== 主内容区（左右分栏） =====
-        paned = tk.PanedWindow(root, bg=BG, orient="horizontal", sashwidth=4, sashrelief="ridge")
+        # ===== 主内容区：单一滚动容器，所有工作流在同一条滚动轴上 =====
+        paned = tk.PanedWindow(root, bg=BG, orient="horizontal", sashwidth=0,
+                               sashrelief="flat", showhandle=False)
         paned.pack(fill="both", expand=True)
 
-        # ---- 左侧：现有内容（可滚动） ----
         left_frame = tk.Frame(paned, bg=BG)
-        main_canvas = tk.Canvas(left_frame, bg=BG, highlightthickness=0)
-        main_scrollbar = ttk.Scrollbar(left_frame, orient="vertical", command=main_canvas.yview)
-        main_frame = tk.Frame(main_canvas, bg=BG, padx=16, pady=12)
+        main_canvas = tk.Canvas(left_frame, bg=BG, highlightthickness=0,
+                                bd=0, yscrollincrement=22)
+        main_scrollbar = ttk.Scrollbar(left_frame, orient="vertical",
+                                       style="Vertical.TScrollbar",
+                                       command=main_canvas.yview)
+        main_frame = tk.Frame(main_canvas, bg=BG, padx=20, pady=16)
         def _set_scrollregion(e, c=main_canvas):
             try:
                 b = c.bbox("all")
@@ -1364,33 +1544,35 @@ class EmulatorShutdownApp:
         main_canvas.pack(side="left", fill="both", expand=True)
         paned.add(left_frame, stretch="always")
 
-        # ---- 右侧：实时日志面板 ----
-        right_frame = tk.Frame(paned, bg=CARD, width=280)
+        # ---- 右侧：收起式日志辅助区，默认不占用主操作空间 ----
+        right_frame = tk.Frame(paned, bg=CARD, width=300, highlightthickness=1,
+                               highlightbackground=BORDER)
         right_frame.pack_propagate(False)
-        # 标题 + 操作按钮
         log_header = tk.Frame(right_frame, bg=CARD)
-        log_header.pack(fill="x", padx=6, pady=(6, 2))
+        log_header.pack(fill="x", padx=10, pady=(10, 6))
         tk.Label(log_header, text="运行日志", font=("Microsoft YaHei", 9, "bold"),
                  bg=CARD, fg=TEXT).pack(side="left")
-        # 复制按钮
-        tk.Button(log_header, text="复制", font=("Microsoft YaHei", 7),
-                  bg="#444", fg=TEXT_LIGHT, bd=0, padx=4, pady=0,
-                  command=self._copy_log).pack(side="right", padx=(2, 0))
-        # 清空按钮
-        tk.Button(log_header, text="清空", font=("Microsoft YaHei", 7),
-                  bg="#444", fg=TEXT_LIGHT, bd=0, padx=4, pady=0,
-                  command=self._clear_log_display).pack(side="right")
-        # 日志文本框
+        RoundedButton(log_header, text="复制", command=self._copy_log,
+                      bg=BG_LIGHT, fg=TEXT_SUB, font=self.f_small, padx=6, pady=1).pack(side="right", padx=(4, 0))
+        RoundedButton(log_header, text="清空", command=self._clear_log_display,
+                      bg=BG_LIGHT, fg=TEXT_SUB, font=self.f_small, padx=6, pady=1).pack(side="right")
         log_frame = tk.Frame(right_frame, bg=CARD)
-        log_frame.pack(fill="both", expand=True, padx=6, pady=(0, 6))
-        self._log_text = tk.Text(log_frame, bg="#1a1a2e", fg="#a0a0c0",
-                                 font=("Consolas", 8), bd=0, wrap="none",
-                                 state="disabled", relief="flat")
-        log_sb = ttk.Scrollbar(log_frame, orient="vertical", command=self._log_text.yview)
+        log_frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        self._log_text = tk.Text(log_frame, bg=BG_LIGHT, fg=TEXT_SUB,
+                                 font=("Consolas", 8), bd=0, wrap="word",
+                                 state="disabled", relief="flat", padx=8, pady=8)
+        log_sb = ttk.Scrollbar(log_frame, orient="vertical", style="Vertical.TScrollbar",
+                               command=self._log_text.yview)
         self._log_text.configure(yscrollcommand=log_sb.set)
         log_sb.pack(side="right", fill="y")
         self._log_text.pack(fill="both", expand=True)
-        paned.add(right_frame, width=280, stretch="never")
+        self._log_panel = right_frame
+        self._log_panel_visible = False
+        self._log_toggle_btn = RoundedButton(
+            h_row, text="日志", command=self._toggle_log_panel,
+            bg=BG_LIGHT, fg=TEXT_SUB, font=self.f_small, padx=10
+        )
+        self._log_toggle_btn.pack(side="right", padx=(0, 10))
 
         # 防抖：拖拽 PanedWindow 时连续 Configure 事件只响应最后一次
         main_cfg_after_id = [None]

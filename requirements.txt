@@ -1,0 +1,5 @@
+# Runtime dependency
+psutil>=5.9,<8
+
+# Build dependency
+pyinstaller>=6.0,<7
